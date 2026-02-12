@@ -320,7 +320,7 @@ async def automate_digen_grok_batch():
             return False
 
     async def set_resolution(page, resolution):
-        """🎞️ Imposta risoluzione con FORCE CLICK + RETRY"""
+        """🎞️ Imposta risoluzione con SCREENSHOT per debug"""
         try:
             print(f"   🎞️ Imposto risoluzione {resolution}...")
             await close_any_dialogs(page)
@@ -329,6 +329,7 @@ async def automate_digen_grok_batch():
             # Cerca bottone risoluzione
             all_buttons = await page.locator('button:visible').all()
             res_button = None
+            current_res = "?"
             
             for btn in all_buttons:
                 try:
@@ -342,7 +343,7 @@ async def automate_digen_grok_batch():
                     if 'p' in text_clean.lower() and len(text_clean) < 8:
                         res_button = btn
                         current_res = text_clean
-                        print(f"   🔍 Bottone risoluzione: '{current_res}'")
+                        print(f"   🔍 Bottone: '{current_res}'")
                         
                         if resolution.lower() in text_clean.lower():
                             print(f"   ✅ {resolution} già attivo")
@@ -352,33 +353,66 @@ async def automate_digen_grok_batch():
                     continue
             
             if not res_button:
-                print(f"   ⚠️ Bottone risoluzione non trovato")
+                print(f"   ⚠️ Bottone non trovato")
                 return False
             
             # Apri menu
-            print(f"   📂 Apro menu (da {current_res} a {resolution})...")
+            print(f"   📂 Apro menu...")
             await res_button.click(force=True)
             await asyncio.sleep(3)
             
-            # 💥 FORCE CLICK con retry
-            for attempt in range(3):
+            # 📸 SCREENSHOT per debug
+            try:
+                await page.screenshot(path="menu_resolution.png", full_page=False)
+                print(f"   📸 Screenshot salvato: menu_resolution.png")
+            except:
+                pass
+            
+            # 💥 Cerca elemento 1080P con più strategie
+            print(f"   🔍 Cerco '{resolution}' nel menu...")
+            
+            # Lista di tutti gli elementi visibili che contengono "1080"
+            candidates = []
+            all_visible = await page.locator('*:visible').all()
+            
+            for elem in all_visible:
                 try:
-                    # Strategia 1: text= selector
-                    res_option = page.locator(f"text={resolution}").first
-                    if await res_option.count() > 0:
-                        print(f"   🎯 Clicco {resolution} (tentativo {attempt+1})...")
-                        await res_option.click(force=True)
-                        await asyncio.sleep(2)
-                        break
-                except:
-                    if attempt < 2:
-                        await asyncio.sleep(1)
+                    text = await elem.text_content()
+                    if not text:
                         continue
+                    text_clean = text.strip()
+                    if '1080' in text_clean and 'p' in text_clean.lower():
+                        box = await elem.bounding_box()
+                        if box:
+                            candidates.append((elem, text_clean, box))
+                            print(f"      - Trovato: '{text_clean}' @ ({int(box['x'])}, {int(box['y'])})")
+                except:
+                    continue
+            
+            if not candidates:
+                print(f"   ❌ Nessun elemento '1080P' trovato")
+                await page.keyboard.press('Escape')
+                return False
+            
+            # Clicca il primo candidato
+            elem, text, box = candidates[0]
+            print(f"   🎯 Clicco '{text}'...")
+            try:
+                await elem.click(force=True)
+                await asyncio.sleep(2)
+            except Exception as e:
+                print(f"   ⚠️ Errore click: {str(e)[:50]}")
+                # Prova a cliccare con coordinate
+                try:
+                    await page.mouse.click(box['x'] + box['width']/2, box['y'] + box['height']/2)
+                    await asyncio.sleep(2)
+                except:
+                    pass
             
             await close_any_dialogs(page)
             await asyncio.sleep(2)
             
-            # ✅ VERIFICA finale
+            # Verifica
             all_buttons_check = await page.locator('button:visible').all()
             for btn in all_buttons_check:
                 try:
@@ -391,7 +425,7 @@ async def automate_digen_grok_batch():
                         continue
                     if 'p' in text_clean.lower() and len(text_clean) < 8:
                         if resolution.lower() in text_clean.lower():
-                            print(f"   ✅ VERIFICATO: {resolution} attivo")
+                            print(f"   ✅ VERIFICATO: {resolution}")
                             return True
                         else:
                             print(f"   ❌ FALLITO: Ancora {text_clean}")
@@ -493,7 +527,7 @@ async def automate_digen_grok_batch():
         return False
 
     async def count_download_buttons(page):
-        """🔢 Conta bottoni download senza filtro enabled"""
+        """🔢 Conta bottoni download"""
         try:
             await asyncio.sleep(2)
             download_selectors = [
@@ -545,7 +579,6 @@ async def automate_digen_grok_batch():
         try:
             buttons = await count_download_buttons(page)
             if check_enabled:
-                # Filtra solo quelli enabled
                 enabled = []
                 for btn, x, y in buttons:
                     if await is_button_enabled(btn):
@@ -556,9 +589,9 @@ async def automate_digen_grok_batch():
             return []
 
     async def wait_for_new_videos(page, initial_count, expected_new, timeout=MAX_GENERATION_WAIT):
-        """🎯 Aspetta che appaiano N NUOVI video rispetto al conteggio iniziale"""
+        """🎯 Aspetta NUOVI video"""
         print(f"   🎯 Video iniziali: {initial_count}")
-        print(f"   🎯 Nuovi attesi: +{expected_new} = {initial_count + expected_new} totali")
+        print(f"   🎯 Nuovi attesi: +{expected_new}")
         print(f"   ⏰ Timeout: {timeout}s\n")
         
         start = asyncio.get_event_loop().time()
@@ -573,53 +606,49 @@ async def automate_digen_grok_batch():
             if current_count > max_seen:
                 max_seen = current_count
                 new_count = current_count - initial_count
-                print(f"      📊 Totali: {current_count} (+{new_count} nuovi)")
+                print(f"      📊 Totali: {current_count} (+{new_count})")
             
             elapsed = int(asyncio.get_event_loop().time() - start)
             
-            # Verifica se abbiamo abbastanza nuovi video
             if current_count >= (initial_count + expected_new):
                 new_videos = current_count - initial_count
-                print(f"\n   ✅ {new_videos} nuovi video pronti!")
+                print(f"\n   ✅ {new_videos} nuovi pronti!")
                 return True, current_buttons
             
             if elapsed % 30 == 0 and elapsed > 0:
                 print(f"      ⏳ {elapsed}s... {current_count}/{initial_count + expected_new}")
         
-        print(f"\n   ⚠️ Timeout! Max visti: {max_seen}")
+        print(f"\n   ⚠️ Timeout! Max: {max_seen}")
         final_buttons = await count_download_buttons(page)
         return False, final_buttons
 
     async def download_from_position(page, file_name, download_folder, position):
-        """🎯 Download bottone alla posizione specificata"""
+        """🎯 Download da posizione"""
         max_retries = MAX_DOWNLOAD_RETRIES
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
-                    print(f"      🔄 Tentativo {attempt + 1}/{max_retries}...")
+                    print(f"      🔄 Retry {attempt + 1}/{max_retries}...")
                     await asyncio.sleep(10)
                 
                 download_buttons = await find_download_buttons_new_interface(page, check_enabled=True)
                 if not download_buttons:
                     if attempt < max_retries - 1:
-                        print(f"      ⚠️ Nessun bottone enabled")
                         continue
-                    return False, "Nessun bottone", None
+                    return False, "No buttons", None
                 
                 if position >= len(download_buttons):
                     if attempt < max_retries - 1:
-                        print(f"      ⚠️ Pos {position} >= {len(download_buttons)}")
                         continue
-                    return False, f"Pos {position} invalida", None
+                    return False, f"Pos {position} invalid", None
                 
                 download_btn, x, y = download_buttons[position]
                 print(f"      🎯 Pos {position}: ({int(x)}, {int(y)})")
                 
                 if not await wait_for_button_enabled(download_btn, timeout=30):
                     if attempt < max_retries - 1:
-                        print(f"      ⚠️ Non clickable")
                         continue
-                    return False, "Non clickable", None
+                    return False, "Not clickable", None
                 
                 print(f"      📥 Download...")
                 async with page.expect_download(timeout=90000) as dl_info:
@@ -627,23 +656,20 @@ async def automate_digen_grok_batch():
                 download = await dl_info.value
                 ext = Path(download.suggested_filename).suffix or '.mp4'
                 final_path = download_folder / f"{file_name}{ext}"
-                print(f"      💾 Salvo...")
                 await download.save_as(str(final_path))
                 size = final_path.stat().st_size
                 if size < 10000:
                     final_path.unlink()
                     if attempt < max_retries - 1:
-                        print(f"      ⚠️ Corrotto")
                         continue
-                    return False, "Corrotto", None
+                    return False, "Corrupt", None
                 size_mb = size / (1024 * 1024)
                 return True, f"{size_mb:.1f} MB", final_path
             except Exception as e:
                 if attempt < max_retries - 1:
-                    print(f"      ⚠️ {str(e)[:30]}")
                     continue
-                return False, f"{str(e)[:50]}", None
-        return False, "Fallito", None
+                return False, str(e)[:40], None
+        return False, "Failed", None
 
     def check_video_exists(file_name, download_folder):
         for ext in ['.mp4', '.webm', '.mov']:
@@ -675,7 +701,7 @@ async def automate_digen_grok_batch():
 
         try:
             if not cookies_file.exists():
-                print("❌ File cookies non trovato! Esegui prima la CELLA 3")
+                print("❌ Cookies non trovati")
                 return
 
             print("📥 Carico sessione...")
@@ -683,18 +709,16 @@ async def automate_digen_grok_batch():
                 cookies = json.load(f)
             await context.add_cookies(cookies)
 
-            print(f"🌐 Navigo a DiGen.ai Space 44998...")
+            print(f"🌐 Navigo...")
             await page.goto(BASE_URL, timeout=30000)
             await asyncio.sleep(3)
 
             await configure_generation_settings(page)
 
-            print("✅ Sessione valida e parametri configurati!\n")
+            print("✅ Sessione valida!\n")
 
-            print(f"🎬 INIZIO GENERAZIONE ({MODEL.upper()}) - Batch da {BATCH_SIZE}")
-            print(f"⏱️ Pausa tra prompt: {PAUSE_BETWEEN_PROMPTS}s")
-            print(f"🔄 Retry download: {MAX_DOWNLOAD_RETRIES} tentativi")
-            print(f"⏰ Timeout generazione: {MAX_GENERATION_WAIT}s (~{MAX_GENERATION_WAIT//60} min)")
+            print(f"🎬 INIZIO - Batch da {BATCH_SIZE}")
+            print(f"⏱️ Pausa: {PAUSE_BETWEEN_PROMPTS}s")
             print("="*60 + "\n")
 
             batch_num = 0
@@ -711,7 +735,7 @@ async def automate_digen_grok_batch():
 
                     exists, path, size = check_video_exists(file_name, download_folder)
                     if exists:
-                        print(f"   ⏭️ Skip {file_name}: già presente ({size:.1f} MB)")
+                        print(f"   ⏭️ Skip {file_name}: presente ({size:.1f} MB)")
                         completed_prompts.add(file_name)
                         save_tracking(completed_prompts, failed_prompts)
                         continue
@@ -719,23 +743,23 @@ async def automate_digen_grok_batch():
                     to_generate.append((idx, row))
 
                 if not to_generate:
-                    print(f"📦 BATCH {batch_num}: Tutti completati\n")
+                    print(f"📦 BATCH {batch_num}: Completato\n")
                     continue
 
                 print(f"📦 BATCH {batch_num}/{(total_prompts + BATCH_SIZE - 1) // BATCH_SIZE}")
-                print(f"   Video da generare: {len(to_generate)}")
+                print(f"   Video: {len(to_generate)}")
 
-                print(f"   🔄 Ricarico pagina...")
+                print(f"   🔄 Ricarico...")
                 await page.goto(BASE_URL, timeout=30000)
                 await asyncio.sleep(2)
                 await configure_generation_settings(page)
                 await asyncio.sleep(2)
 
-                # 🔢 CONTA bottoni PRIMA di generare
-                print(f"\n   🔢 Conto video esistenti...")
+                # 🔢 CONTA PRIMA
+                print(f"\n   🔢 Conto esistenti...")
                 initial_buttons = await count_download_buttons(page)
                 initial_count = len(initial_buttons)
-                print(f"   📊 Video già presenti: {initial_count}\n")
+                print(f"   📊 Presenti: {initial_count}\n")
 
                 generation_success = {}
                 for gen_idx, (idx, row) in enumerate(to_generate):
@@ -745,18 +769,18 @@ async def automate_digen_grok_batch():
                     print(f"   📝 {gen_idx + 1}/{len(to_generate)}: {file_name}")
 
                     if not await insert_prompt_multiline(page, prompt_text):
-                        print(f"   ⚠️ Errore inserimento")
+                        print(f"   ⚠️ Errore")
                         generation_success[file_name] = False
                         continue
 
-                    print(f"   ✅ Inserito")
+                    print(f"   ✅ OK")
                     print(f"   🚀 Generate...")
                     
                     if await click_generate_button(page):
-                        print(f"   ✅ Inviato")
+                        print(f"   ✅ Sent")
                         generation_success[file_name] = True
                     else:
-                        print(f"   ⚠️ Errore invio")
+                        print(f"   ⚠️ Fail")
                         generation_success[file_name] = False
 
                     if gen_idx < len(to_generate) - 1:
@@ -766,31 +790,37 @@ async def automate_digen_grok_batch():
                 expected_videos = sum(1 for success in generation_success.values() if success)
 
                 if expected_videos == 0:
-                    print(f"\n⚠️ Nessun video generato\n")
+                    print(f"\n⚠️ Nessuno generato\n")
                     continue
 
-                print(f"\n⏳ Attendo {expected_videos} nuovi video...")
-                success, all_buttons = await wait_for_new_videos(page, initial_count, expected_videos)
+                print(f"\n⏳ Attendo {expected_videos} nuovi...")
+                success_wait, all_buttons = await wait_for_new_videos(page, initial_count, expected_videos)
 
                 await asyncio.sleep(5)
 
-                print(f"\n📥 Scarico {len(to_generate)} video...\n")
+                # 🔢 CONTA DOPO
+                final_buttons = await count_download_buttons(page)
+                final_count = len(final_buttons)
+                print(f"\n📊 DOPO generazione: {final_count} totali")
+                print(f"📥 Scarico {len(to_generate)} video...\n")
 
-                # 🎯 I NUOVI video sono alle posizioni [initial_count ... initial_count+N-1]
+                # 🎯 SCARICA gli ULTIMI N video (dalla fine)
+                # Se ho 40 video totali e voglio 2, scarico posizioni 38 e 39
                 successful_downloads = 0
                 for download_idx in range(len(to_generate)):
                     idx, row = to_generate[download_idx]
                     file_name = str(row['NomeFile']).strip()
 
                     if not generation_success.get(file_name, False):
-                        print(f"   ⏭️ {download_idx + 1}: {file_name} - Non generato")
+                        print(f"   ⏭️ {download_idx + 1}: {file_name} - Skip")
                         failed_prompts[file_name] = failed_prompts.get(file_name, 0) + 1
                         continue
 
-                    # Posizione ASSOLUTA = initial_count + download_idx
-                    absolute_position = initial_count + download_idx
+                    # 🎯 SCARICA DALLA FINE
+                    # absolute_position = final_count - len(to_generate) + download_idx
+                    absolute_position = final_count - expected_videos + download_idx
 
-                    print(f"   {download_idx + 1}/{len(to_generate)}: {file_name} [pos {absolute_position}]")
+                    print(f"   {download_idx + 1}/{len(to_generate)}: {file_name} [pos {absolute_position}/{final_count}]")
                     success_dl, msg, path = await download_from_position(
                         page, file_name, download_folder, absolute_position
                     )
@@ -807,7 +837,7 @@ async def automate_digen_grok_batch():
                     save_tracking(completed_prompts, failed_prompts)
                     await asyncio.sleep(3)
 
-                print(f"✅ BATCH {batch_num} COMPLETATO! ({successful_downloads}/{len(to_generate)})\n")
+                print(f"✅ BATCH {batch_num} OK! ({successful_downloads}/{len(to_generate)})\n")
 
                 if i + BATCH_SIZE < total_prompts:
                     print("⏸️ Pausa 15s...")
@@ -823,12 +853,9 @@ async def automate_digen_grok_batch():
             print(f"\n📊 STATISTICHE:")
             print(f"   ✅ Video: {len(videos)}/{total_prompts}")
             print(f"   💾 Spazio: {total_mb:.1f} MB")
-            print(f"   ⚙️ Config: {DURATION}, {ASPECT_RATIO}, {RESOLUTION}")
 
             if failed_prompts:
                 print(f"\n⚠️ FALLITI: {len(failed_prompts)}")
-                for name, count in list(failed_prompts.items())[:5]:
-                    print(f"   - {name}: {count}x")
 
             print(f"\n📁 {download_folder}\n")
 
