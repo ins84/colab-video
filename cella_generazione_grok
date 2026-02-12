@@ -334,109 +334,134 @@ async def automate_digen_grok_batch():
 
         return False
 
-    async def find_download_buttons_in_sidebar(page, check_enabled=True):
+    async def find_download_buttons_new_interface(page, check_enabled=True):
+        """🆕 Cerca bottoni download nella NUOVA interfaccia (overlay sui video)"""
         try:
             await asyncio.sleep(2)
-            all_buttons = await page.locator('button:visible').all()
-            sidebar_buttons = []
-
-            for btn in all_buttons:
+            
+            # Cerca bottoni con le caratteristiche specifiche del nuovo design
+            download_selectors = [
+                'button[data-slot="tooltip-trigger"]:has(svg)',  # Principale
+                'button.backdrop-blur-md:has(svg)',  # Con backdrop blur
+                'button[class*="bg-light/10"]:has(svg)',  # Con bg-light/10
+                'button.size-9:has(svg)',  # Size 9
+                'button:has(svg[viewBox="0 0 256 256"])'  # SVG specifica
+            ]
+            
+            download_buttons = []
+            
+            for selector in download_selectors:
                 try:
-                    is_visible = await btn.is_visible()
-                    if not is_visible:
-                        continue
-
-                    box = await btn.bounding_box()
-                    if not box:
-                        continue
-
-                    # Bottoni nella sidebar destra (x > 1500)
-                    if box['x'] < 1500:
-                        continue
-
-                    if check_enabled:
-                        if not await is_button_enabled(btn):
+                    buttons = await page.locator(selector).all()
+                    
+                    for btn in buttons:
+                        try:
+                            is_visible = await btn.is_visible()
+                            if not is_visible:
+                                continue
+                            
+                            # Verifica che abbia l'icona download (freccia giù)
+                            html = await btn.inner_html()
+                            
+                            # Cerca path SVG con pattern di freccia download
+                            if 'M228,144v64a12,12,0,0,1-12,12H40' in html or \
+                               'path' in html.lower() and 'download' in html.lower():
+                                
+                                if check_enabled:
+                                    if not await is_button_enabled(btn):
+                                        continue
+                                
+                                box = await btn.bounding_box()
+                                if box:
+                                    download_buttons.append((btn, box['x'], box['y']))
+                                    
+                        except Exception as e:
                             continue
-
-                    html = await btn.inner_html()
-                    has_svg = 'svg' in html.lower()
-                    is_icon_button = (box['width'] < 100 and box['height'] < 100)
-
-                    if has_svg and is_icon_button:
-                        sidebar_buttons.append((btn, box['x'], box['y']))
-
+                            
                 except Exception as e:
                     continue
-
-            by_y = defaultdict(list)
-            for btn, x, y in sidebar_buttons:
-                y_group = round(y / 30) * 30
-                by_y[y_group].append((btn, x, y))
-
-            download_buttons = []
-            for y_group in sorted(by_y.keys()):
-                buttons = by_y[y_group]
-                buttons.sort(key=lambda b: b[1])
-                rightmost = buttons[-1]
-                download_buttons.append(rightmost)
-
+            
+            # Se non trova con selettori specifici, cerca tutti i bottoni piccoli con SVG
+            if not download_buttons:
+                print(f"      🔄 Fallback: cerco tutti i bottoni con SVG...")
+                all_buttons = await page.locator('button:visible').all()
+                
+                for btn in all_buttons:
+                    try:
+                        box = await btn.bounding_box()
+                        if not box:
+                            continue
+                        
+                        # Bottoni piccoli (circa 36x36)
+                        if 30 < box['width'] < 50 and 30 < box['height'] < 50:
+                            html = await btn.inner_html()
+                            
+                            # Ha SVG?
+                            if 'svg' in html.lower():
+                                if check_enabled:
+                                    if not await is_button_enabled(btn):
+                                        continue
+                                
+                                download_buttons.append((btn, box['x'], box['y']))
+                    except:
+                        continue
+            
+            # Ordina per posizione Y (dall'alto verso il basso)
+            download_buttons.sort(key=lambda b: b[2])
+            
+            print(f"      ✅ Trovati {len(download_buttons)} bottoni download")
             return download_buttons
 
         except Exception as e:
             print(f"      ⚠️ Errore ricerca bottoni: {e}")
             return []
 
-    async def wait_for_videos_ready(page, initial_clickable, expected_new, timeout=MAX_GENERATION_WAIT):
-        print(f"   📊 Bottoni clickable iniziali: {initial_clickable}")
+    async def wait_for_videos_ready(page, expected_new, timeout=MAX_GENERATION_WAIT):
+        """Attende che i nuovi video siano pronti monitorando i bottoni download"""
         print(f"   🎯 Nuovi video attesi: {expected_new}")
         print(f"   ⏰ Timeout massimo: {timeout}s (~{timeout//60} min)\n")
 
-        initial_buttons = await find_download_buttons_in_sidebar(page, check_enabled=True)
-        initial_positions = set((int(y//50)*50) for _, x, y in initial_buttons)
-
-        print(f"   📍 Posizioni Y iniziali: {sorted(initial_positions)}")
-
         start = asyncio.get_event_loop().time()
-        changes_detected = 0
-        last_positions = initial_positions
+        max_buttons_seen = 0
 
         while (asyncio.get_event_loop().time() - start) < timeout:
             await asyncio.sleep(10)
 
-            current_buttons = await find_download_buttons_in_sidebar(page, check_enabled=True)
-            current_positions = set((int(y//50)*50) for _, x, y in current_buttons)
-            current_clickable = len(current_buttons)
+            current_buttons = await find_download_buttons_new_interface(page, check_enabled=True)
+            current_count = len(current_buttons)
+            
+            if current_count > max_buttons_seen:
+                max_buttons_seen = current_count
+                print(f"      📊 Nuovi bottoni rilevati: {current_count}")
 
             elapsed = int(asyncio.get_event_loop().time() - start)
 
-            if current_positions != last_positions:
-                changes_detected += 1
-                print(f"      🔄 {elapsed}s: Posizioni cambiate! (cambio #{changes_detected})")
-                print(f"      📍 Nuove posizioni Y: {sorted(current_positions)}")
-
-                if changes_detected >= expected_new:
-                    print(f"\n   ✅ Rilevati {changes_detected} cambiamenti = {expected_new} video pronti!")
-                    return True
-
-                last_positions = current_positions
-
-            if elapsed % 30 == 0 and elapsed > 0:
-                print(f"      ⏳ {elapsed}s... clickable: {current_clickable}, cambiamenti: {changes_detected}/{expected_new}")
-
-            if elapsed > 90 and changes_detected >= expected_new:
-                print(f"\n   ✅ {changes_detected} cambiamenti dopo {elapsed}s, procedo!")
+            # Se abbiamo tutti i bottoni attesi
+            if current_count >= expected_new:
+                print(f"\n   ✅ {current_count} bottoni pronti = {expected_new} video generati!")
                 return True
 
-        print(f"\n   ⚠️ Timeout {timeout}s! Cambiamenti: {changes_detected}/{expected_new}")
+            # Log ogni 30s
+            if elapsed % 30 == 0 and elapsed > 0:
+                print(f"      ⏳ {elapsed}s... bottoni: {current_count}/{expected_new}")
 
-        if changes_detected > 0:
-            print(f"   ✅ Rilevati {changes_detected} cambiamenti, video probabilmente pronti!")
+            # Dopo 90s con bottoni disponibili, procedi
+            if elapsed > 90 and current_count > 0:
+                print(f"\n   ✅ {current_count} bottoni dopo {elapsed}s, procedo!")
+                return True
+
+        # Timeout
+        print(f"\n   ⚠️ Timeout {timeout}s! Bottoni: {max_buttons_seen}/{expected_new}")
+
+        if max_buttons_seen > 0:
+            print(f"   ✅ Trovati {max_buttons_seen} video, procedo!")
             return True
         else:
-            print(f"   ⚠️ Nessun cambiamento rilevato, procedo con retry...")
+            print(f"   ⚠️ Nessun video pronto")
             return False
 
-    async def download_from_sidebar_position(page, file_name, download_folder, position):
+    async def download_from_position(page, file_name, download_folder, position):
+        """Scarica video dalla posizione specificata (0=più recente)"""
         max_retries = MAX_DOWNLOAD_RETRIES
 
         for attempt in range(max_retries):
@@ -446,7 +471,7 @@ async def automate_digen_grok_batch():
                     await asyncio.sleep(10)
 
                 print(f"      🔍 Cerco bottoni download...")
-                download_buttons = await find_download_buttons_in_sidebar(page, check_enabled=True)
+                download_buttons = await find_download_buttons_new_interface(page, check_enabled=True)
 
                 if not download_buttons:
                     if attempt < max_retries - 1:
@@ -454,7 +479,7 @@ async def automate_digen_grok_batch():
                         continue
                     return False, "Nessun bottone trovato dopo retry", None
 
-                print(f"      ✅ Trovati {len(download_buttons)} bottoni clickable")
+                print(f"      ✅ Trovati {len(download_buttons)} bottoni")
 
                 if position >= len(download_buttons):
                     if attempt < max_retries - 1:
@@ -593,9 +618,6 @@ async def automate_digen_grok_batch():
                 await configure_generation_settings(page)
                 await asyncio.sleep(2)
 
-                initial_buttons = await find_download_buttons_in_sidebar(page, check_enabled=True)
-                initial_clickable = len(initial_buttons)
-
                 generation_success = {}
                 for gen_idx, (idx, row) in enumerate(to_generate):
                     prompt_text = str(row['Prompt']).strip()
@@ -629,7 +651,7 @@ async def automate_digen_grok_batch():
                     continue
 
                 print(f"\n⏳ Attendo che {expected_videos} video diventino pronti...")
-                await wait_for_videos_ready(page, initial_clickable, expected_videos)
+                await wait_for_videos_ready(page, expected_videos)
 
                 await asyncio.sleep(5)
 
@@ -645,10 +667,11 @@ async def automate_digen_grok_batch():
                         failed_prompts[file_name] = failed_prompts.get(file_name, 0) + 1
                         continue
 
-                    position = len(to_generate) - 1 - download_idx
+                    # 🆕 Video più recenti sono in posizione 0 (dall'alto)
+                    position = download_idx
 
                     print(f"   {download_idx + 1}/{len(to_generate)}: {file_name} (pos: {position})")
-                    success, msg, path = await download_from_sidebar_position(
+                    success, msg, path = await download_from_position(
                         page, file_name, download_folder, position
                     )
 
