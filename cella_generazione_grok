@@ -26,8 +26,8 @@ DURATION = "6s"
 ASPECT_RATIO = "3:2"
 RESOLUTION = "1080P"
 
-# 🔍 DEBUG MODE: stampa contenuto di ogni bottone
-DEBUG_BUTTONS = True
+# 🔍 DEBUG: Mostra primi 10 bottoni
+DEBUG_MODE = True
 
 async def automate_digen_grok_batch():
     BASE_URL = "https://digen.ai/en/space/44998"
@@ -59,69 +59,69 @@ async def automate_digen_grok_batch():
     else:
         failed_prompts = {}
 
-    # ============================================
-    # FUNZIONI HELPER
-    # ============================================
-
     async def close_any_dialogs(page):
         try:
             await page.keyboard.press('Escape')
             await asyncio.sleep(0.5)
-            
             overlay = page.locator('[data-slot="dialog-overlay"][data-state="open"]')
             if await overlay.count() > 0:
-                print("   🚪 Chiudo dialog aperto...")
                 await page.keyboard.press('Escape')
                 await asyncio.sleep(1)
-                
             await page.wait_for_selector('[data-slot="dialog-overlay"][data-state="open"]', state='hidden', timeout=5000)
-            
         except:
             pass
 
     async def select_grok_model(page):
-        """🆕 Selezione Grok con debug completo e strategie multiple"""
         try:
             print(f"   🎯 Seleziono modello Grok...")
             await close_any_dialogs(page)
             await asyncio.sleep(3)
             
-            # Trova tutti i bottoni nella barra di controllo (quella con i parametri)
-            # Sono quelli con rounded-full, bg-light/6
-            control_buttons = await page.locator('button[class*="rounded-full"][class*="bg-light"]').all()
+            # 🔍 Cerca TUTTI i bottoni visibili nella pagina
+            all_buttons = await page.locator('button:visible').all()
+            print(f"   📊 Totale bottoni visibili: {len(all_buttons)}")
             
-            print(f"   🔍 Trovati {len(control_buttons)} bottoni nella control bar")
+            # Filtra bottoni nella zona di controllo (primi 800px dall'alto, primi 1200px da sinistra)
+            control_buttons = []
+            for btn in all_buttons:
+                try:
+                    box = await btn.bounding_box()
+                    if box and box['y'] < 800 and box['x'] < 1200:
+                        control_buttons.append(btn)
+                except:
+                    continue
             
-            if DEBUG_BUTTONS:
-                print("\n   📝 DEBUG: Contenuto bottoni (primi 10):")
-                for idx, btn in enumerate(control_buttons[:10]):
+            print(f"   🔍 Bottoni nella zona controllo: {len(control_buttons)}")
+            
+            if DEBUG_MODE and control_buttons:
+                print(f"\n   📝 DEBUG: Primi 15 bottoni nella zona controllo:")
+                for idx, btn in enumerate(control_buttons[:15]):
                     try:
-                        if not await btn.is_visible():
-                            continue
-                        text = await btn.inner_text()
-                        html_snippet = await btn.inner_html()
-                        # Mostra solo primi 100 caratteri dell'HTML
-                        print(f"      [{idx}] Testo: '{text.strip()[:30]}' | HTML: {html_snippet[:80]}...")
-                    except:
-                        continue
+                        text = await btn.text_content()
+                        text_clean = text.strip() if text else "[no text]"
+                        box = await btn.bounding_box()
+                        x = int(box['x']) if box else 0
+                        y = int(box['y']) if box else 0
+                        w = int(box['width']) if box else 0
+                        h = int(box['height']) if box else 0
+                        print(f"      [{idx}] '{text_clean[:40]}' | pos:({x},{y}) size:{w}x{h}")
+                    except Exception as e:
+                        print(f"      [{idx}] ERROR: {str(e)[:40]}")
                 print()
             
-            # Strategia 1: Cerca bottone con span contentente "Grok" (case-insensitive)
+            # STRATEGIA 1: Cerca "Grok" nei bottoni della zona controllo
+            print(f"   🔎 Strategia 1: Cerca testo 'Grok'...")
             for idx, btn in enumerate(control_buttons):
                 try:
-                    if not await btn.is_visible():
-                        continue
-                    
-                    # Prendi tutto il testo interno
                     text = await btn.text_content()
                     if not text:
                         continue
                     
-                    text_clean = text.strip().lower()
+                    text_lower = text.strip().lower()
                     
-                    # Match esatto o contenuto
-                    if text_clean == 'grok' or 'grok' in text_clean:
-                        print(f"   ✅ Trovato Grok (bottone {idx}): '{text.strip()}'")
+                    # Match per "grok"
+                    if 'grok' in text_lower:
+                        print(f"   ✅ TROVATO Grok al bottone {idx}: '{text.strip()}'")
                         await btn.click()
                         await asyncio.sleep(2)
                         print(f"   ✅ Modello Grok selezionato")
@@ -130,79 +130,64 @@ async def automate_digen_grok_batch():
                 except Exception as e:
                     continue
             
-            # Strategia 2: Cerca nell'area dei model selectors (primi 5-6 bottoni)
-            print(f"   🔄 Strategia 2: Cerca nei primi bottoni dell'interfaccia...")
-            
-            # I bottoni modello sono tipicamente nelle prime posizioni dopo il +
-            # Dall'immagine: + | Grok | orologio | aspect | resolution
-            model_buttons = control_buttons[:8]  # Primi 8 bottoni
-            
-            for idx, btn in enumerate(model_buttons):
+            # STRATEGIA 2: Cerca bottoni piccoli con testo corto (probabili model selector)
+            print(f"   🔎 Strategia 2: Cerca bottoni modello (piccoli con testo)...")
+            for idx, btn in enumerate(control_buttons):
                 try:
-                    if not await btn.is_visible():
+                    box = await btn.bounding_box()
+                    if not box:
                         continue
                     
-                    # Ottieni attributi del bottone
-                    html = await btn.inner_html()
-                    
-                    # Cerca caratteristiche uniche di Grok:
-                    # - Ha un'icona SVG
-                    # - Ha uno span con testo
-                    # - L'SVG ha un path specifico
-                    
-                    if 'svg' in html.lower() and '<span' in html:
-                        # Prendi il testo dello span
-                        spans = await btn.locator('span').all()
-                        for span in spans:
-                            try:
-                                span_text = await span.text_content()
-                                if span_text and 'grok' in span_text.lower():
-                                    print(f"   ✅ Trovato Grok via span (bottone {idx})")
+                    # Bottoni modello: larghezza 60-150px, altezza 30-60px
+                    if 60 < box['width'] < 150 and 30 < box['height'] < 60:
+                        text = await btn.text_content()
+                        if text:
+                            text_clean = text.strip()
+                            # Testo corto (4-10 caratteri) = probabilmente modello
+                            if 4 <= len(text_clean) <= 10:
+                                print(f"   🔍 Bottone modello candidato [{idx}]: '{text_clean}'")
+                                
+                                # Se contiene "grok" o se è il 2°-3° bottone piccolo trovato
+                                if 'grok' in text_clean.lower():
+                                    print(f"   ✅ SELEZIONO Grok: '{text_clean}'")
                                     await btn.click()
                                     await asyncio.sleep(2)
-                                    print(f"   ✅ Modello Grok selezionato")
                                     return True
-                            except:
-                                continue
-                    
-                except Exception as e:
+                except:
                     continue
             
-            # Strategia 3: Usa coordinate approssimative
-            # Dall'immagine, Grok sembra essere il 2°-3° bottone visibile
-            print(f"   🔄 Strategia 3: Uso posizione approssimativa...")
-            
-            visible_buttons = []
-            for btn in control_buttons[:10]:
+            # STRATEGIA 3: Usa secondo bottone con SVG e span
+            print(f"   🔎 Strategia 3: Secondo bottone con icona+testo...")
+            buttons_with_icon_text = []
+            for btn in control_buttons:
                 try:
-                    if await btn.is_visible():
+                    html = await btn.inner_html()
+                    text = await btn.text_content()
+                    
+                    # Ha sia SVG che testo?
+                    if 'svg' in html.lower() and text and len(text.strip()) > 2:
                         box = await btn.bounding_box()
-                        if box and box['x'] < 800:  # Bottoni a sinistra
-                            visible_buttons.append((btn, box['x']))
+                        if box and box['x'] < 600:  # Solo bottoni a sinistra
+                            buttons_with_icon_text.append((btn, text.strip(), box['x']))
                 except:
                     continue
             
             # Ordina per posizione X
-            visible_buttons.sort(key=lambda x: x[1])
+            buttons_with_icon_text.sort(key=lambda x: x[2])
             
-            # Il secondo o terzo bottone dovrebbe essere Grok
-            for position in [1, 2, 3]:  # Prova posizioni 1, 2, 3
-                if position < len(visible_buttons):
-                    try:
-                        btn, x = visible_buttons[position]
-                        text = await btn.text_content()
-                        print(f"   📍 Provo bottone posizione {position} (x={int(x)}): '{text.strip() if text else 'no text'}'")
-                        
-                        # Se contiene testo e non è solo un'icona
-                        if text and len(text.strip()) > 2:
-                            print(f"   ✅ Seleziono questo come Grok (fallback)")
-                            await btn.click()
-                            await asyncio.sleep(2)
-                            return True
-                    except:
-                        continue
+            print(f"   📋 Trovati {len(buttons_with_icon_text)} bottoni icona+testo:")
+            for i, (btn, txt, x) in enumerate(buttons_with_icon_text[:5]):
+                print(f"      [{i}] '{txt}' @ x={int(x)}")
             
-            print(f"   ⚠️ Modello Grok non trovato, uso default")
+            # Prova il secondo (indice 1)
+            if len(buttons_with_icon_text) >= 2:
+                btn, txt, x = buttons_with_icon_text[1]
+                print(f"   ✅ Seleziono secondo bottone: '{txt}'")
+                await btn.click()
+                await asyncio.sleep(2)
+                return True
+            
+            print(f"   ⚠️ Modello Grok non trovato")
             return False
 
         except Exception as e:
@@ -215,7 +200,6 @@ async def automate_digen_grok_batch():
             await close_any_dialogs(page)
             await asyncio.sleep(1)
             
-            # Cerca bottoni con l'icona rettangolo (aspect ratio)
             aspect_buttons = await page.locator('button:has(svg:has(rect))').all()
             
             for btn in aspect_buttons:
@@ -229,18 +213,15 @@ async def automate_digen_grok_batch():
                     
                     text = text.strip()
                     
-                    # Se già impostato
                     if ratio in text:
                         print(f"   ✅ Aspect ratio {ratio} già impostato")
                         return True
                     
-                    # Se è un bottone aspect ratio (contiene : o "Auto")
                     if ':' in text or 'auto' in text.lower():
                         print(f"   📂 Apro menu aspect ratio (attuale: {text})...")
                         await btn.click()
                         await asyncio.sleep(2)
                         
-                        # Cerca opzione nel menu
                         option = page.locator(f'button:has-text("{ratio}"), [role="menuitem"]:has-text("{ratio}")').first
                         
                         try:
@@ -251,8 +232,6 @@ async def automate_digen_grok_batch():
                                 print(f"   ✅ Aspect ratio {ratio} selezionato")
                                 return True
                         except:
-                            print(f"   ⚠️ Opzione {ratio} non trovata nel menu")
-                            # Chiudi menu
                             await page.keyboard.press('Escape')
                             await asyncio.sleep(0.5)
                         
@@ -281,7 +260,6 @@ async def automate_digen_grok_batch():
             return False
 
         except Exception as e:
-            print(f"   ⚠️ Errore risoluzione: {str(e)[:50]}")
             return False
 
     async def set_duration(page, duration):
@@ -290,7 +268,6 @@ async def automate_digen_grok_batch():
             await close_any_dialogs(page)
             await asyncio.sleep(1)
             
-            # Cerca bottoni con icona orologio (circle nel SVG)
             duration_buttons = await page.locator('button:has(svg:has(circle))').all()
             
             for btn in duration_buttons:
@@ -304,18 +281,15 @@ async def automate_digen_grok_batch():
                     
                     text = text.strip()
                     
-                    # Se già impostato
                     if duration in text:
                         print(f"   ✅ Durata {duration} già impostata")
                         return True
                     
-                    # Se è un bottone durata (contiene "s" per secondi)
                     if 's' in text.lower() and len(text) < 10:
                         print(f"   📂 Apro menu durata (attuale: {text})...")
                         await btn.click()
                         await asyncio.sleep(2)
                         
-                        # Cerca opzione nel menu
                         option = page.locator(f'button:has-text("{duration}"), [role="menuitem"]:has-text("{duration}")').first
                         
                         try:
@@ -326,7 +300,6 @@ async def automate_digen_grok_batch():
                                 print(f"   ✅ Durata {duration} selezionata")
                                 return True
                         except:
-                            print(f"   ⚠️ Opzione {duration} non trovata nel menu")
                             await page.keyboard.press('Escape')
                             await asyncio.sleep(0.5)
                         
@@ -343,47 +316,35 @@ async def automate_digen_grok_batch():
 
     async def configure_generation_settings(page):
         print(f"   ⚙️ Configurazione parametri generazione...")
-        
         await close_any_dialogs(page)
         await select_grok_model(page)
         await set_duration(page, DURATION)
         await set_aspect_ratio(page, ASPECT_RATIO)
         await set_resolution(page, RESOLUTION)
         await close_any_dialogs(page)
-        
         print(f"   ✅ Configurazione completata\n")
 
     async def insert_prompt_multiline(page, prompt_text):
         try:
             await close_any_dialogs(page)
             await asyncio.sleep(1)
-            
             textarea = page.locator('textarea[maxlength="5000"]').first
             await textarea.wait_for(state='visible', timeout=10000)
-            
             await textarea.click(force=True)
             await asyncio.sleep(0.5)
-            
             await page.keyboard.press('Control+A')
             await page.keyboard.press('Backspace')
             await asyncio.sleep(0.3)
-            
             await textarea.fill(prompt_text)
             await asyncio.sleep(0.5)
             return True
-            
         except Exception as e:
-            print(f"      ⚠️ Errore inserimento: {str(e)[:100]}")
-            
             try:
-                print(f"      🔄 Retry con force...")
                 await page.keyboard.press('Escape')
                 await asyncio.sleep(1)
-                
                 textarea = page.locator('textarea').first
                 await textarea.click(force=True, timeout=5000)
                 await asyncio.sleep(0.5)
-                
                 await page.keyboard.type(prompt_text, delay=10)
                 await asyncio.sleep(0.5)
                 return True
@@ -393,19 +354,16 @@ async def automate_digen_grok_batch():
     async def click_generate_button(page):
         try:
             await close_any_dialogs(page)
-            
             generate_selectors = [
                 'button[class*="bg-light"][class*="font-medium"]:has(svg)',
                 'button.bg-light:has(svg)',
                 'button[data-slot="button"]:has(svg)'
             ]
-            
             for selector in generate_selectors:
                 try:
                     btn = page.locator(selector).last
                     if await btn.count() > 0 and await btn.is_visible():
                         await asyncio.sleep(2)
-                        
                         is_disabled = await btn.get_attribute('disabled')
                         if is_disabled is None:
                             print(f"   ✅ Trovato bottone generate")
@@ -413,11 +371,9 @@ async def automate_digen_grok_batch():
                             return True
                 except:
                     continue
-            
             print(f"   🔄 Uso shortcut Control+Enter")
             await page.keyboard.press('Control+Enter')
             return True
-
         except Exception as e:
             print(f"   ⚠️ Errore click generate: {e}")
             return False
@@ -448,71 +404,53 @@ async def automate_digen_grok_batch():
     async def find_download_buttons_new_interface(page, check_enabled=True):
         try:
             await asyncio.sleep(2)
-            
             download_selectors = [
                 'button[data-slot="tooltip-trigger"]:has(svg)',
                 'button.backdrop-blur-md:has(svg)',
                 'button[class*="bg-light/10"]:has(svg)',
                 'button.size-9:has(svg)'
             ]
-            
             download_buttons = []
-            
             for selector in download_selectors:
                 try:
                     buttons = await page.locator(selector).all()
-                    
                     for btn in buttons:
                         try:
                             is_visible = await btn.is_visible()
                             if not is_visible:
                                 continue
-                            
                             html = await btn.inner_html()
-                            
                             if 'M228,144v64a12,12,0,0,1-12,12H40' in html:
                                 if check_enabled:
                                     if not await is_button_enabled(btn):
                                         continue
-                                
                                 box = await btn.bounding_box()
                                 if box:
                                     download_buttons.append((btn, box['x'], box['y']))
-                                    
                         except Exception as e:
                             continue
-                            
                 except Exception as e:
                     continue
-            
             if not download_buttons:
-                print(f"      🔄 Fallback: cerco bottoni piccoli con SVG...")
                 all_buttons = await page.locator('button:visible').all()
-                
                 for btn in all_buttons:
                     try:
                         box = await btn.bounding_box()
                         if not box:
                             continue
-                        
                         if 30 < box['width'] < 50 and 30 < box['height'] < 50:
                             html = await btn.inner_html()
-                            
                             if 'svg' in html.lower():
                                 if check_enabled:
                                     if not await is_button_enabled(btn):
                                         continue
-                                
                                 download_buttons.append((btn, box['x'], box['y']))
                     except:
                         continue
-            
             download_buttons.sort(key=lambda b: b[2])
-            
             if download_buttons:
                 print(f"      ✅ Trovati {len(download_buttons)} bottoni download")
             return download_buttons
-
         except Exception as e:
             print(f"      ⚠️ Errore ricerca bottoni: {e}")
             return []
@@ -520,35 +458,25 @@ async def automate_digen_grok_batch():
     async def wait_for_videos_ready(page, expected_new, timeout=MAX_GENERATION_WAIT):
         print(f"   🎯 Nuovi video attesi: {expected_new}")
         print(f"   ⏰ Timeout massimo: {timeout}s (~{timeout//60} min)\n")
-
         start = asyncio.get_event_loop().time()
         max_buttons_seen = 0
-
         while (asyncio.get_event_loop().time() - start) < timeout:
             await asyncio.sleep(10)
-
             current_buttons = await find_download_buttons_new_interface(page, check_enabled=True)
             current_count = len(current_buttons)
-            
             if current_count > max_buttons_seen:
                 max_buttons_seen = current_count
                 print(f"      📊 Nuovi bottoni rilevati: {current_count}")
-
             elapsed = int(asyncio.get_event_loop().time() - start)
-
             if current_count >= expected_new:
                 print(f"\n   ✅ {current_count} bottoni pronti = {expected_new} video generati!")
                 return True
-
             if elapsed % 30 == 0 and elapsed > 0:
                 print(f"      ⏳ {elapsed}s... bottoni: {current_count}/{expected_new}")
-
             if elapsed > 90 and current_count > 0:
                 print(f"\n   ✅ {current_count} bottoni dopo {elapsed}s, procedo!")
                 return True
-
         print(f"\n   ⚠️ Timeout {timeout}s! Bottoni: {max_buttons_seen}/{expected_new}")
-
         if max_buttons_seen > 0:
             print(f"   ✅ Trovati {max_buttons_seen} video, procedo!")
             return True
@@ -558,51 +486,40 @@ async def automate_digen_grok_batch():
 
     async def download_from_position(page, file_name, download_folder, position):
         max_retries = MAX_DOWNLOAD_RETRIES
-
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
                     print(f"      🔄 Tentativo {attempt + 1}/{max_retries}...")
                     await asyncio.sleep(10)
-
                 print(f"      🔍 Cerco bottoni download...")
                 download_buttons = await find_download_buttons_new_interface(page, check_enabled=True)
-
                 if not download_buttons:
                     if attempt < max_retries - 1:
                         print(f"      ⚠️ Nessun bottone clickable, attendo...")
                         continue
                     return False, "Nessun bottone trovato dopo retry", None
-
                 print(f"      ✅ Trovati {len(download_buttons)} bottoni")
-
                 if position >= len(download_buttons):
                     if attempt < max_retries - 1:
                         print(f"      ⚠️ Posizione {position} non esiste, attendo...")
                         continue
                     return False, f"Posizione {position} non esiste", None
-
                 download_btn, x, y = download_buttons[position]
                 print(f"      🎯 Bottone posizione {position} a ({int(x)}, {int(y)})")
-
                 print(f"      ⏳ Verifico che il bottone sia clickable...")
                 if not await wait_for_button_enabled(download_btn, timeout=30):
                     if attempt < max_retries - 1:
                         print(f"      ⚠️ Bottone non clickable, riprovo...")
                         continue
                     return False, "Bottone non clickable", None
-
                 print(f"      📥 Clicco download...")
                 async with page.expect_download(timeout=90000) as dl_info:
                     await download_btn.click()
                 download = await dl_info.value
-
                 ext = Path(download.suggested_filename).suffix or '.mp4'
                 final_path = download_folder / f"{file_name}{ext}"
-
                 print(f"      💾 Salvo in Drive...")
                 await download.save_as(str(final_path))
-
                 size = final_path.stat().st_size
                 if size < 10000:
                     final_path.unlink()
@@ -610,16 +527,13 @@ async def automate_digen_grok_batch():
                         print(f"      ⚠️ File corrotto, riprovo...")
                         continue
                     return False, "File corrotto", None
-
                 size_mb = size / (1024 * 1024)
                 return True, f"{size_mb:.1f} MB", final_path
-
             except Exception as e:
                 if attempt < max_retries - 1:
                     print(f"      ⚠️ Errore: {str(e)[:50]}, riprovo...")
                     continue
                 return False, f"Errore: {str(e)[:100]}", None
-
         return False, "Tutti i tentativi falliti", None
 
     def check_video_exists(file_name, download_folder):
@@ -635,10 +549,6 @@ async def automate_digen_grok_batch():
             json.dump(list(completed), f)
         with open(failed_file, 'w') as f:
             json.dump(failed, f, indent=2)
-
-    # ============================================
-    # MAIN EXECUTION
-    # ============================================
 
     print("🌐 Avvio browser...")
     async with async_playwright() as p:
@@ -820,5 +730,4 @@ async def automate_digen_grok_batch():
         finally:
             await browser.close()
 
-# ESEGUI
 await automate_digen_grok_batch()
