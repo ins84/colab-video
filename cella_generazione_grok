@@ -320,9 +320,146 @@ async def automate_digen_grok_batch():
             return False
 
     async def set_resolution(page, resolution):
-        """🎞️ SKIP risoluzione - genera problemi, user può impostarla manualmente"""
-        print(f"   🎞️ Risoluzione {resolution}: SKIP (imposta manualmente se necessario)")
-        return True
+        """🎞️ Seleziona 1080P dal menu radio button"""
+        try:
+            print(f"   🎞️ Imposto risoluzione {resolution}...")
+            await close_any_dialogs(page)
+            await asyncio.sleep(1)
+            
+            # 1️⃣ Trova bottone risoluzione
+            all_buttons = await page.locator('button:visible').all()
+            res_button = None
+            current_res = "?"
+            
+            for btn in all_buttons:
+                try:
+                    text = await btn.text_content()
+                    if not text:
+                        continue
+                    text_clean = text.strip()
+                    box = await btn.bounding_box()
+                    if not box or not (900 < box['y'] < 1100):
+                        continue
+                    if 'p' in text_clean.lower() and len(text_clean) < 8:
+                        res_button = btn
+                        current_res = text_clean
+                        print(f"   🔍 Bottone risoluzione: '{current_res}'")
+                        
+                        if '1080' in text_clean:
+                            print(f"   ✅ {resolution} già attivo")
+                            return True
+                        break
+                except:
+                    continue
+            
+            if not res_button:
+                print(f"   ⚠️ Bottone risoluzione non trovato")
+                return True  # Continua comunque
+            
+            # 2️⃣ Apri menu
+            print(f"   📂 Apro menu risoluzione...")
+            await res_button.click(force=True)
+            await asyncio.sleep(3)
+            
+            # 3️⃣ Cerca il RADIO BUTTON "1080P" (dall'immagine: è un elemento cliccabile)
+            print(f"   🎯 Cerco radio button '1080P'...")
+            
+            # Strategia: Cerca tutti gli elementi che contengono esattamente "1080P"
+            # e sono piccoli (larghezza 40-100px, altezza 20-50px)
+            candidates = []
+            
+            all_elements = await page.locator('*:visible').all()
+            for elem in all_elements:
+                try:
+                    text = await elem.text_content()
+                    if not text:
+                        continue
+                    
+                    text_clean = text.strip()
+                    
+                    # DEVE essere esattamente "1080P" o "1080p"
+                    if text_clean.lower() != '1080p':
+                        continue
+                    
+                    box = await elem.bounding_box()
+                    if not box:
+                        continue
+                    
+                    # Filtro per dimensioni ragionevoli (pulsante piccolo)
+                    if 20 < box['width'] < 150 and 15 < box['height'] < 60:
+                        # Deve essere nella zona menu (y > 600, y < 1000)
+                        if 600 < box['y'] < 1000:
+                            candidates.append((elem, text_clean, box))
+                            print(f"      ✓ Trovato: '{text_clean}' @ ({int(box['x'])}, {int(box['y'])}) size:{int(box['width'])}x{int(box['height'])}")
+                except:
+                    continue
+            
+            if not candidates:
+                print(f"   ⚠️ Radio button 1080P non trovato")
+                await page.keyboard.press('Escape')
+                return True  # Continua comunque
+            
+            # Prendi il primo candidato
+            best_elem, best_text, best_box = candidates[0]
+            print(f"   🎯 Clicco su '{best_text}'...")
+            
+            # Prova 3 modi
+            clicked = False
+            
+            # Modo 1: Click con coordinate
+            try:
+                await page.mouse.click(
+                    best_box['x'] + best_box['width'] / 2,
+                    best_box['y'] + best_box['height'] / 2
+                )
+                clicked = True
+                print(f"   ✅ Click effettuato (coordinate)")
+            except:
+                pass
+            
+            # Modo 2: Click diretto
+            if not clicked:
+                try:
+                    await best_elem.click(force=True, timeout=3000)
+                    clicked = True
+                    print(f"   ✅ Click effettuato (diretto)")
+                except:
+                    pass
+            
+            if not clicked:
+                print(f"   ⚠️ Click fallito")
+                await page.keyboard.press('Escape')
+                return True  # Continua comunque
+            
+            await asyncio.sleep(2)
+            
+            # 4️⃣ Verifica
+            all_buttons_check = await page.locator('button:visible').all()
+            for btn in all_buttons_check:
+                try:
+                    text = await btn.text_content()
+                    if not text:
+                        continue
+                    text_clean = text.strip()
+                    box = await btn.bounding_box()
+                    if not box or not (900 < box['y'] < 1100):
+                        continue
+                    if 'p' in text_clean.lower() and len(text_clean) < 8:
+                        if '1080' in text_clean:
+                            print(f"   ✅ {resolution} selezionato!")
+                            return True
+                        else:
+                            print(f"   ⚠️ Ancora {text_clean} (continuo comunque)")
+                            return True
+                except:
+                    continue
+            
+            print(f"   ⚠️ Verifica non riuscita (continuo)")
+            return True
+
+        except Exception as e:
+            print(f"   ⚠️ Errore: {str(e)[:80]}")
+            return True
 
     async def configure_generation_settings(page):
         print(f"   ⚙️ Configurazione parametri generazione...")
@@ -412,65 +549,42 @@ async def automate_digen_grok_batch():
         return False
 
     async def count_download_buttons(page):
-        """🔢 Conta bottoni download SOLO nell'area principale (NO sidebar)"""
+        """🔢 Conta SOLO bottoni download dei video (SVG specifico)"""
         try:
             await asyncio.sleep(2)
-            download_selectors = [
-                'button[data-slot="tooltip-trigger"]:has(svg)',
-                'button.backdrop-blur-md:has(svg)',
-                'button[class*="bg-light/10"]:has(svg)',
-                'button.size-9:has(svg)'
-            ]
             download_buttons = []
-            for selector in download_selectors:
+            
+            # Cerca SOLO bottoni con SVG path download specifico
+            all_buttons = await page.locator('button:visible').all()
+            for btn in all_buttons:
                 try:
-                    buttons = await page.locator(selector).all()
-                    for btn in buttons:
-                        try:
-                            is_visible = await btn.is_visible()
-                            if not is_visible:
-                                continue
-                            
-                            box = await btn.bounding_box()
-                            if not box:
-                                continue
-                            
-                            # 🚨 FILTRA: Solo bottoni nell'area principale (x > 200, y < 900)
-                            # Esclude sidebar sinistra (x < 200) e controlli in basso (y > 900)
-                            if box['x'] < 200 or box['y'] > 900:
-                                continue
-                            
-                            html = await btn.inner_html()
-                            if 'M228,144v64a12,12,0,0,1-12,12H40' in html:
-                                download_buttons.append((btn, box['x'], box['y']))
-                        except:
-                            continue
+                    is_visible = await btn.is_visible()
+                    if not is_visible:
+                        continue
+                    
+                    box = await btn.bounding_box()
+                    if not box:
+                        continue
+                    
+                    # 🚨 FILTRI STRETTI:
+                    # 1. Zona video principale: x > 300, y < 800
+                    # 2. Dimensione pulsante: 30-50px
+                    if not (300 < box['x'] < 1800 and 200 < box['y'] < 800):
+                        continue
+                    
+                    if not (25 < box['width'] < 60 and 25 < box['height'] < 60):
+                        continue
+                    
+                    # 3. DEVE contenere l'SVG path specifico del download
+                    html = await btn.inner_html()
+                    if 'M228,144v64a12,12,0,0,1-12,12H40' in html or 'download' in html.lower():
+                        download_buttons.append((btn, box['x'], box['y']))
                 except:
                     continue
             
-            if not download_buttons:
-                all_buttons = await page.locator('button:visible').all()
-                for btn in all_buttons:
-                    try:
-                        box = await btn.bounding_box()
-                        if not box:
-                            continue
-                        
-                        # 🚨 FILTRA: x > 200, y < 900
-                        if box['x'] < 200 or box['y'] > 900:
-                            continue
-                        
-                        if 30 < box['width'] < 50 and 30 < box['height'] < 50:
-                            html = await btn.inner_html()
-                            if 'svg' in html.lower():
-                                download_buttons.append((btn, box['x'], box['y']))
-                    except:
-                        continue
+            # Ordina per Y poi X
+            download_buttons.sort(key=lambda b: (b[2], b[1]))
             
-            # Ordina per Y (verticale)
-            download_buttons.sort(key=lambda b: b[2])
-            
-            print(f"   🔢 Bottoni trovati (x>200, y<900): {len(download_buttons)}")
             return download_buttons
         except:
             return []
@@ -661,13 +775,14 @@ async def automate_digen_grok_batch():
                 # 🔢 CONTA VIDEO PRIMA DELLA GENERAZIONE
                 initial_buttons = await count_download_buttons(page)
                 initial_count = len(initial_buttons)
+                print(f"   📊 Video già presenti: {initial_count}\n")
 
                 generation_success = {}
                 for gen_idx, (idx, row) in enumerate(to_generate):
                     prompt_text = str(row['Prompt']).strip()
                     file_name = str(row['NomeFile']).strip()
 
-                    print(f"\n   📝 {gen_idx + 1}/{len(to_generate)}: {file_name}")
+                    print(f"   📝 {gen_idx + 1}/{len(to_generate)}: {file_name}")
 
                     if not await insert_prompt_multiline(page, prompt_text):
                         print(f"   ⚠️ Errore inserimento prompt")
@@ -685,7 +800,7 @@ async def automate_digen_grok_batch():
                         generation_success[file_name] = False
 
                     if gen_idx < len(to_generate) - 1:
-                        print(f"   ⏸️ Pausa {PAUSE_BETWEEN_PROMPTS}s...")
+                        print(f"   ⏸️ Pausa {PAUSE_BETWEEN_PROMPTS}s...\n")
                         await asyncio.sleep(PAUSE_BETWEEN_PROMPTS)
 
                 expected_videos = sum(1 for success in generation_success.values() if success)
@@ -701,6 +816,7 @@ async def automate_digen_grok_batch():
                 # 🔢 CONTA VIDEO DOPO LA GENERAZIONE
                 final_buttons = await count_download_buttons(page)
                 final_count = len(final_buttons)
+                print(f"\n📊 Video finali: {final_count} (erano {initial_count})")
 
                 print(f"\n📥 Scarico {len(to_generate)} video...\n")
 
