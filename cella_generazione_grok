@@ -320,7 +320,7 @@ async def automate_digen_grok_batch():
             return False
 
     async def set_resolution(page, resolution):
-        """🎞️ Imposta risoluzione (es. 1080P)"""
+        """🎞️ Imposta risoluzione (es. 1080P) con VERIFICA"""
         try:
             print(f"   🎞️ Imposto risoluzione {resolution}...")
             await close_any_dialogs(page)
@@ -355,25 +355,70 @@ async def automate_digen_grok_batch():
                         await btn.click()
                         await asyncio.sleep(3)
                         
-                        # Cerca risoluzione desiderata nel menu
-                        all_visible = await page.locator('*:visible').all()
-                        for elem in all_visible:
-                            try:
-                                text = await elem.text_content()
-                                if text and resolution.lower() in text.strip().lower():
-                                    # Verifica lunghezza testo (es. "1080P" ha 5 char)
-                                    if len(text.strip()) < 10:
+                        # 🎯 Cerca risoluzione desiderata - usa SELETTORI PRECISI
+                        # Prova con selettore preciso per menu item
+                        found = False
+                        
+                        # Strategia 1: Usa text selector
+                        try:
+                            resolution_selector = f"text={resolution}"
+                            res_elem = page.locator(resolution_selector).first
+                            if await res_elem.count() > 0 and await res_elem.is_visible():
+                                await res_elem.click()
+                                await asyncio.sleep(2)
+                                print(f"   ✅ Risoluzione {resolution} selezionata (text selector)")
+                                found = True
+                        except:
+                            pass
+                        
+                        # Strategia 2: Fallback - cerca in tutti gli elementi
+                        if not found:
+                            all_visible = await page.locator('*:visible').all()
+                            for elem in all_visible:
+                                try:
+                                    text = await elem.text_content()
+                                    if text and text.strip() == resolution:
                                         await elem.click()
-                                        await asyncio.sleep(1)
-                                        print(f"   ✅ Risoluzione {resolution} selezionata")
+                                        await asyncio.sleep(2)
+                                        print(f"   ✅ Risoluzione {resolution} selezionata (fallback)")
+                                        found = True
+                                        break
+                                except:
+                                    continue
+                        
+                        if not found:
+                            print(f"   ⚠️ {resolution} non trovato nel menu")
+                            await page.keyboard.press('Escape')
+                            await asyncio.sleep(0.5)
+                            return False
+                        
+                        # ✅ VERIFICA che la risoluzione sia cambiata
+                        await asyncio.sleep(2)
+                        await close_any_dialogs(page)
+                        await asyncio.sleep(1)
+                        
+                        # Ricontrolla il bottone
+                        all_buttons_verify = await page.locator('button:visible').all()
+                        for btn_verify in all_buttons_verify:
+                            try:
+                                text_verify = await btn_verify.text_content()
+                                if not text_verify:
+                                    continue
+                                text_verify_clean = text_verify.strip()
+                                box_verify = await btn_verify.bounding_box()
+                                if not box_verify or not (900 < box_verify['y'] < 1100):
+                                    continue
+                                if 'p' in text_verify_clean.lower() and len(text_verify_clean) < 8:
+                                    if resolution.lower() in text_verify_clean.lower():
+                                        print(f"   ✅ VERIFICATO: Risoluzione {resolution} attiva")
                                         return True
+                                    else:
+                                        print(f"   ⚠️ ERRORE: Risoluzione ancora {text_verify_clean}")
+                                        return False
                             except:
                                 continue
                         
-                        print(f"   ⚠️ {resolution} non trovato nel menu")
-                        await page.keyboard.press('Escape')
-                        await asyncio.sleep(0.5)
-                        return False
+                        return True
                 except:
                     continue
             
@@ -517,7 +562,10 @@ async def automate_digen_grok_batch():
                                 download_buttons.append((btn, box['x'], box['y']))
                     except:
                         continue
-            download_buttons.sort(key=lambda b: b[2])
+            
+            # 🎯 ORDINA per Y (verticale) - video più in basso (nuovi) hanno Y più alto
+            download_buttons.sort(key=lambda b: b[2])  # ordina per y crescente
+            
             if download_buttons:
                 print(f"      ✅ Trovati {len(download_buttons)} bottoni download")
             return download_buttons
@@ -538,15 +586,13 @@ async def automate_digen_grok_batch():
                 max_buttons_seen = current_count
                 print(f"      📊 Nuovi bottoni rilevati: {current_count}")
             elapsed = int(asyncio.get_event_loop().time() - start)
-            if current_count >= expected_new:
-                print(f"\n   ✅ {current_count} bottoni pronti = {expected_new} video generati!")
-                return True
-            if elapsed % 30 == 0 and elapsed > 0:
-                print(f"      ⏳ {elapsed}s... bottoni: {current_count}/{expected_new}")
-            if elapsed > 90 and current_count > 0:
+            # 🎯 Non fermarsi subito - aspetta almeno 60s per far apparire i nuovi video
+            if elapsed > 60 and current_count >= expected_new:
                 print(f"\n   ✅ {current_count} bottoni dopo {elapsed}s, procedo!")
                 return True
-        print(f"\n   ⚠️ Timeout {timeout}s! Bottoni: {max_buttons_seen}/{expected_new}")
+            if elapsed % 30 == 0 and elapsed > 0:
+                print(f"      ⏳ {elapsed}s... bottoni: {current_count}")
+        print(f"\n   ⚠️ Timeout {timeout}s! Bottoni: {max_buttons_seen}")
         if max_buttons_seen > 0:
             print(f"   ✅ Trovati {max_buttons_seen} video, procedo!")
             return True
@@ -554,7 +600,8 @@ async def automate_digen_grok_batch():
             print(f"   ⚠️ Nessun video pronto")
             return False
 
-    async def download_from_position(page, file_name, download_folder, position):
+    async def download_from_position(page, file_name, download_folder, position, total_buttons):
+        """🎯 Download con posizione RELATIVA ALLA FINE (ultimi N video)"""
         max_retries = MAX_DOWNLOAD_RETRIES
         for attempt in range(max_retries):
             try:
@@ -568,14 +615,26 @@ async def automate_digen_grok_batch():
                         print(f"      ⚠️ Nessun bottone clickable, attendo...")
                         continue
                     return False, "Nessun bottone trovato dopo retry", None
-                print(f"      ✅ Trovati {len(download_buttons)} bottoni")
-                if position >= len(download_buttons):
+                
+                total_found = len(download_buttons)
+                print(f"      ✅ Trovati {total_found} bottoni totali")
+                
+                # 🎯 STRATEGIA: I video NUOVI sono in FONDO
+                # Se ho generato 2 video e trovo 20 bottoni totali,
+                # i nuovi sono alle posizioni 18 e 19 (ultimi 2)
+                # Quindi: actual_position = total_found - total_buttons + position
+                actual_position = total_found - total_buttons + position
+                
+                print(f"      🎯 Video {position+1}/{total_buttons} -> Bottone reale pos {actual_position}/{total_found}")
+                
+                if actual_position < 0 or actual_position >= total_found:
                     if attempt < max_retries - 1:
-                        print(f"      ⚠️ Posizione {position} non esiste, attendo...")
+                        print(f"      ⚠️ Posizione {actual_position} invalida, attendo...")
                         continue
-                    return False, f"Posizione {position} non esiste", None
-                download_btn, x, y = download_buttons[position]
-                print(f"      🎯 Bottone posizione {position} a ({int(x)}, {int(y)})")
+                    return False, f"Posizione {actual_position} invalida", None
+                
+                download_btn, x, y = download_buttons[actual_position]
+                print(f"      💯 Bottone a ({int(x)}, {int(y)})")
                 print(f"      ⏳ Verifico che il bottone sia clickable...")
                 if not await wait_for_button_enabled(download_btn, timeout=30):
                     if attempt < max_retries - 1:
@@ -741,11 +800,9 @@ async def automate_digen_grok_batch():
                         failed_prompts[file_name] = failed_prompts.get(file_name, 0) + 1
                         continue
 
-                    position = download_idx
-
-                    print(f"   {download_idx + 1}/{len(to_generate)}: {file_name} (pos: {position})")
+                    print(f"   {download_idx + 1}/{len(to_generate)}: {file_name}")
                     success, msg, path = await download_from_position(
-                        page, file_name, download_folder, position
+                        page, file_name, download_folder, download_idx, len(to_generate)
                     )
 
                     if success:
