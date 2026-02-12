@@ -64,67 +64,100 @@ async def automate_digen_grok_batch():
     async def close_any_dialogs(page):
         """Chiude qualsiasi dialog/modal aperto"""
         try:
-            # Premi ESC per chiudere eventuali dialog
             await page.keyboard.press('Escape')
             await asyncio.sleep(0.5)
             
-            # Aspetta che l'overlay scompaia
             overlay = page.locator('[data-slot="dialog-overlay"][data-state="open"]')
             if await overlay.count() > 0:
                 print("   🚪 Chiudo dialog aperto...")
                 await page.keyboard.press('Escape')
                 await asyncio.sleep(1)
                 
-            # Aspetta che non ci siano overlay visibili
             await page.wait_for_selector('[data-slot="dialog-overlay"][data-state="open"]', state='hidden', timeout=5000)
             
         except:
-            pass  # Se non ci sono dialog, ignora
+            pass
 
     async def select_grok_model(page):
-        """Seleziona il modello Grok dalla nuova interfaccia"""
+        """Seleziona il modello Grok usando l'SVG icon specifico"""
         try:
             print(f"   🎯 Seleziono modello Grok...")
             await close_any_dialogs(page)
             await asyncio.sleep(2)
             
-            # Cerca il pulsante con span contenente "Grok"
-            grok_selectors = [
-                'button:has(span:text("Grok"))',
-                'button span:text("Grok")',
-                '[data-slot="popover-trigger"]:has-text("Grok")',
-                'button:has-text("Grok")'
-            ]
+            # 🎯 Cerca il bottone Grok usando il suo SVG specifico
+            # viewBox="0 0 20 19" con path che inizia con "M4.987 4.263"
             
-            for selector in grok_selectors:
+            # Strategia 1: Trova tutti i bottoni popover-trigger
+            all_triggers = await page.locator('[data-slot="popover-trigger"]').all()
+            
+            print(f"   🔍 Trovati {len(all_triggers)} popover-trigger buttons")
+            
+            for idx, btn in enumerate(all_triggers):
                 try:
-                    # Aspetta fino a 5 secondi
-                    await page.wait_for_selector(selector, state='visible', timeout=5000)
-                    grok_btn = page.locator(selector).first
+                    # Controlla se è visibile
+                    if not await btn.is_visible():
+                        continue
                     
-                    if await grok_btn.is_visible():
-                        print(f"   ✅ Trovato bottone Grok")
-                        await grok_btn.click()
+                    # Ottieni HTML interno
+                    html = await btn.inner_html()
+                    
+                    # Verifica se contiene l'SVG di Grok (viewBox="0 0 20 19")
+                    if 'viewBox="0 0 20 19"' in html or 'M4.987 4.263' in html:
+                        # Verifica che contenga il testo "Grok"
+                        text = await btn.inner_text()
+                        if 'Grok' in text or 'grok' in text.lower():
+                            print(f"   ✅ Trovato bottone Grok (indice {idx})")
+                            print(f"   📝 Testo bottone: {text.strip()}")
+                            await btn.click()
+                            await asyncio.sleep(2)
+                            print(f"   ✅ Modello Grok selezionato")
+                            return True
+                    
+                except Exception as e:
+                    continue
+            
+            # Strategia 2: Cerca con XPath per testo esatto "Grok"
+            print(f"   🔄 Strategia 2: XPath con testo Grok...")
+            try:
+                # Bottone che contiene un span con testo esatto "Grok"
+                grok_btn = page.locator('button:has(span:text-is("Grok"))')
+                
+                if await grok_btn.count() > 0:
+                    first = grok_btn.first
+                    if await first.is_visible():
+                        text = await first.inner_text()
+                        print(f"   ✅ Trovato con XPath: {text.strip()}")
+                        await first.click()
+                        await asyncio.sleep(2)
+                        print(f"   ✅ Modello Grok selezionato")
+                        return True
+            except:
+                pass
+            
+            # Strategia 3: Scansiona tutti i bottoni e cerca "Grok" nel testo
+            print(f"   🔄 Strategia 3: Scansione tutti i bottoni...")
+            all_buttons = await page.locator('button:visible').all()
+            
+            for btn in all_buttons:
+                try:
+                    text = await btn.inner_text()
+                    # Cerca match esatto "Grok" (case-insensitive)
+                    if text.strip().lower() == 'grok':
+                        print(f"   ✅ Trovato Grok tramite scansione")
+                        await btn.click()
+                        await asyncio.sleep(2)
+                        print(f"   ✅ Modello Grok selezionato")
+                        return True
+                    # O se contiene "Grok" come parte del testo
+                    elif 'grok' in text.lower() and len(text.strip()) < 20:
+                        print(f"   ✅ Trovato Grok: {text.strip()}")
+                        await btn.click()
                         await asyncio.sleep(2)
                         print(f"   ✅ Modello Grok selezionato")
                         return True
                 except:
                     continue
-            
-            # Fallback: click su coordinate approssimative del bottone Grok
-            # (basato sullo screenshot, è il secondo bottone dopo il +)
-            print(f"   🔄 Uso coordinate approssimative...")
-            try:
-                # Trova tutti i bottoni popover-trigger
-                triggers = await page.locator('[data-slot="popover-trigger"]:visible').all()
-                if len(triggers) >= 2:
-                    # Il secondo dovrebbe essere Grok (dopo il +)
-                    await triggers[1].click()
-                    await asyncio.sleep(2)
-                    print(f"   ✅ Modello Grok selezionato (fallback)")
-                    return True
-            except:
-                pass
             
             print(f"   ⚠️ Modello Grok non trovato, uso default")
             return False
@@ -240,23 +273,18 @@ async def automate_digen_grok_batch():
         await set_duration(page, DURATION)
         await set_aspect_ratio(page, ASPECT_RATIO)
         await set_resolution(page, RESOLUTION)
-        await close_any_dialogs(page)  # Chiudi tutto prima di iniziare
+        await close_any_dialogs(page)
         
         print(f"   ✅ Configurazione completata\n")
 
     async def insert_prompt_multiline(page, prompt_text):
         try:
-            # Chiudi eventuali dialog prima
             await close_any_dialogs(page)
             await asyncio.sleep(1)
             
-            # Cerca il textarea
             textarea = page.locator('textarea[maxlength="5000"]').first
-            
-            # Aspetta che sia visibile e non bloccato
             await textarea.wait_for(state='visible', timeout=10000)
             
-            # Prova a cliccare con force=True per bypassare overlay
             await textarea.click(force=True)
             await asyncio.sleep(0.5)
             
@@ -271,7 +299,6 @@ async def automate_digen_grok_batch():
         except Exception as e:
             print(f"      ⚠️ Errore inserimento: {str(e)[:100]}")
             
-            # Ultimo tentativo: usa force e keyboard
             try:
                 print(f"      🔄 Retry con force...")
                 await page.keyboard.press('Escape')
@@ -281,7 +308,6 @@ async def automate_digen_grok_batch():
                 await textarea.click(force=True, timeout=5000)
                 await asyncio.sleep(0.5)
                 
-                # Type direttamente
                 await page.keyboard.type(prompt_text, delay=10)
                 await asyncio.sleep(0.5)
                 return True
@@ -293,7 +319,6 @@ async def automate_digen_grok_batch():
         try:
             await close_any_dialogs(page)
             
-            # Il bottone generate è l'ultimo sulla destra, con bg-light
             generate_selectors = [
                 'button[class*="bg-light"][class*="font-medium"]:has(svg)',
                 'button.bg-light:has(svg)',
@@ -302,9 +327,8 @@ async def automate_digen_grok_batch():
             
             for selector in generate_selectors:
                 try:
-                    btn = page.locator(selector).last  # Ultimo = generate
+                    btn = page.locator(selector).last
                     if await btn.count() > 0 and await btn.is_visible():
-                        # Aspetta che sia enabled
                         await asyncio.sleep(2)
                         
                         is_disabled = await btn.get_attribute('disabled')
@@ -315,7 +339,6 @@ async def automate_digen_grok_batch():
                 except:
                     continue
             
-            # Fallback: Control+Enter
             print(f"   🔄 Uso shortcut Control+Enter")
             await page.keyboard.press('Control+Enter')
             return True
@@ -357,7 +380,6 @@ async def automate_digen_grok_batch():
         try:
             await asyncio.sleep(2)
             
-            # Cerca bottoni con le caratteristiche specifiche del nuovo design
             download_selectors = [
                 'button[data-slot="tooltip-trigger"]:has(svg)',
                 'button.backdrop-blur-md:has(svg)',
@@ -377,10 +399,8 @@ async def automate_digen_grok_batch():
                             if not is_visible:
                                 continue
                             
-                            # Verifica che abbia l'icona download
                             html = await btn.inner_html()
                             
-                            # Path SVG con pattern download
                             if 'M228,144v64a12,12,0,0,1-12,12H40' in html:
                                 
                                 if check_enabled:
@@ -397,7 +417,6 @@ async def automate_digen_grok_batch():
                 except Exception as e:
                     continue
             
-            # Fallback
             if not download_buttons:
                 print(f"      🔄 Fallback: cerco bottoni piccoli con SVG...")
                 all_buttons = await page.locator('button:visible').all()
@@ -408,7 +427,6 @@ async def automate_digen_grok_batch():
                         if not box:
                             continue
                         
-                        # Bottoni piccoli
                         if 30 < box['width'] < 50 and 30 < box['height'] < 50:
                             html = await btn.inner_html()
                             
@@ -421,7 +439,6 @@ async def automate_digen_grok_batch():
                     except:
                         continue
             
-            # Ordina per Y
             download_buttons.sort(key=lambda b: b[2])
             
             if download_buttons:
