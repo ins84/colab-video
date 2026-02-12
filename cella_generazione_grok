@@ -75,7 +75,6 @@ async def automate_digen_grok_batch():
             await close_any_dialogs(page)
             await asyncio.sleep(2)
             
-            # 🔍 Cerca il bottone del modello attuale (es. RM2.6)
             all_buttons = await page.locator('button:visible').all()
             
             model_button = None
@@ -91,7 +90,6 @@ async def automate_digen_grok_batch():
                     if not box:
                         continue
                     
-                    # Zona controlli: y > 900, y < 1100
                     if 900 < box['y'] < 1100:
                         if 3 <= len(text_clean) <= 10 and any(c.isalpha() for c in text_clean):
                             if text_clean.lower() not in ['auto', 'create']:
@@ -106,17 +104,14 @@ async def automate_digen_grok_batch():
                 print(f"   ⚠️ Bottone modello non trovato")
                 return False
             
-            # Clicca per aprire il menu popup
             print(f"   📂 Apro menu modelli...")
             await model_button.click()
             await asyncio.sleep(3)
             
-            # 🎯 STRATEGIA: Cerca PRIMA "Grok Video" esatto, poi fallback su "Grok"
             print(f"   🔎 Cerco 'Grok Video' nel menu popup...")
             
             candidates = []
             
-            # Cerca in vari tipi di elementi
             selectors = [
                 'button:visible',
                 '[role="menuitem"]:visible', 
@@ -140,25 +135,21 @@ async def automate_digen_grok_batch():
                             text_clean = text.strip()
                             text_lower = text_clean.lower()
                             
-                            # Cerca "grok" nel testo
                             if 'grok' not in text_lower:
                                 continue
                             
-                            # Verifica che sia visibile
                             box = await elem.bounding_box()
                             if not box:
                                 continue
                             
-                            # Filtra solo elementi con testo corto/medio
                             if 3 <= len(text_clean) <= 50:
-                                # 🎯 Priorità: "Grok Video" ha priorità massima
                                 priority = 0
                                 if 'grok video' in text_lower:
-                                    priority = 1  # Massima priorità
+                                    priority = 1
                                 elif text_lower == 'grok':
-                                    priority = 2  # Bassa priorità (potrebbe essere sidebar)
+                                    priority = 2
                                 else:
-                                    priority = 3  # Altri match (es. "Grok VideoAudio")
+                                    priority = 3
                                 
                                 candidates.append((elem, text_clean, priority, len(text_clean), box['width'] * box['height']))
                         except:
@@ -172,21 +163,17 @@ async def automate_digen_grok_batch():
                 await asyncio.sleep(0.5)
                 return False
             
-            # 🎯 Ordina per: 1) Priorità (Grok Video prima), 2) Testo più corto, 3) Area più piccola
-            candidates.sort(key=lambda c: (c[2], c[3], c[4]))  # priority, text_len, area
+            candidates.sort(key=lambda c: (c[2], c[3], c[4]))
             
-            # Seleziona il migliore
             best_elem, best_text, best_priority, best_len, best_area = candidates[0]
             print(f"   ✅ Seleziono: '{best_text}'")
             
-            # Clicca
             try:
                 await best_elem.click(timeout=5000)
                 await asyncio.sleep(2)
                 print(f"   ✅ Modello Grok selezionato")
                 return True
             except Exception as click_err:
-                # Prova a cliccare su un elemento figlio cliccabile
                 try:
                     print(f"   🔄 Click diretto fallito, provo elemento figlio...")
                     clickable_child = best_elem.locator('button, [role="button"], a').first
@@ -326,7 +313,6 @@ async def automate_digen_grok_batch():
             await close_any_dialogs(page)
             await asyncio.sleep(1)
             
-            # 1️⃣ Trova bottone risoluzione
             all_buttons = await page.locator('button:visible').all()
             res_button = None
             current_res = "?"
@@ -354,18 +340,14 @@ async def automate_digen_grok_batch():
             
             if not res_button:
                 print(f"   ⚠️ Bottone risoluzione non trovato")
-                return True  # Continua comunque
+                return True
             
-            # 2️⃣ Apri menu
             print(f"   📂 Apro menu risoluzione...")
             await res_button.click(force=True)
             await asyncio.sleep(3)
             
-            # 3️⃣ Cerca il RADIO BUTTON "1080P" (dall'immagine: è un elemento cliccabile)
             print(f"   🎯 Cerco radio button '1080P'...")
             
-            # Strategia: Cerca tutti gli elementi che contengono esattamente "1080P"
-            # e sono piccoli (larghezza 40-100px, altezza 20-50px)
             candidates = []
             
             all_elements = await page.locator('*:visible').all()
@@ -377,7 +359,6 @@ async def automate_digen_grok_batch():
                     
                     text_clean = text.strip()
                     
-                    # DEVE essere esattamente "1080P" o "1080p"
                     if text_clean.lower() != '1080p':
                         continue
                     
@@ -385,55 +366,45 @@ async def automate_digen_grok_batch():
                     if not box:
                         continue
                     
-                    # Filtro per dimensioni ragionevoli (pulsante piccolo)
                     if 20 < box['width'] < 150 and 15 < box['height'] < 60:
-                        # Deve essere nella zona menu (y > 600, y < 1000)
                         if 600 < box['y'] < 1000:
                             candidates.append((elem, text_clean, box))
-                            print(f"      ✓ Trovato: '{text_clean}' @ ({int(box['x'])}, {int(box['y'])}) size:{int(box['width'])}x{int(box['height'])}")
                 except:
                     continue
             
             if not candidates:
                 print(f"   ⚠️ Radio button 1080P non trovato")
                 await page.keyboard.press('Escape')
-                return True  # Continua comunque
+                return True
             
-            # Prendi il primo candidato
             best_elem, best_text, best_box = candidates[0]
             print(f"   🎯 Clicco su '{best_text}'...")
             
-            # Prova 3 modi
             clicked = False
             
-            # Modo 1: Click con coordinate
             try:
                 await page.mouse.click(
                     best_box['x'] + best_box['width'] / 2,
                     best_box['y'] + best_box['height'] / 2
                 )
                 clicked = True
-                print(f"   ✅ Click effettuato (coordinate)")
             except:
                 pass
             
-            # Modo 2: Click diretto
             if not clicked:
                 try:
                     await best_elem.click(force=True, timeout=3000)
                     clicked = True
-                    print(f"   ✅ Click effettuato (diretto)")
                 except:
                     pass
             
             if not clicked:
                 print(f"   ⚠️ Click fallito")
                 await page.keyboard.press('Escape')
-                return True  # Continua comunque
+                return True
             
             await asyncio.sleep(2)
             
-            # 4️⃣ Verifica
             all_buttons_check = await page.locator('button:visible').all()
             for btn in all_buttons_check:
                 try:
@@ -454,7 +425,6 @@ async def automate_digen_grok_batch():
                 except:
                     continue
             
-            print(f"   ⚠️ Verifica non riuscita (continuo)")
             return True
 
         except Exception as e:
@@ -549,12 +519,11 @@ async def automate_digen_grok_batch():
         return False
 
     async def count_download_buttons(page):
-        """🔢 Conta SOLO bottoni download dei video (SVG specifico)"""
+        """🔢 Conta bottoni download - FILTRI AMPLIATI"""
         try:
             await asyncio.sleep(2)
             download_buttons = []
             
-            # Cerca SOLO bottoni con SVG path download specifico
             all_buttons = await page.locator('button:visible').all()
             for btn in all_buttons:
                 try:
@@ -566,23 +535,23 @@ async def automate_digen_grok_batch():
                     if not box:
                         continue
                     
-                    # 🚨 FILTRI STRETTI:
-                    # 1. Zona video principale: x > 300, y < 800
-                    # 2. Dimensione pulsante: 30-50px
-                    if not (300 < box['x'] < 1800 and 200 < box['y'] < 800):
+                    # 🔍 FILTRI AMPLIATI:
+                    # 1. Zona MOLTO ampia: x > 250, y < 900 (era 300, 800)
+                    if not (250 < box['x'] < 1850 and 150 < box['y'] < 900):
                         continue
                     
-                    if not (25 < box['width'] < 60 and 25 < box['height'] < 60):
+                    # 2. Dimensioni più permissive: 20-70px (era 25-60)
+                    if not (20 < box['width'] < 70 and 20 < box['height'] < 70):
                         continue
                     
-                    # 3. DEVE contenere l'SVG path specifico del download
+                    # 3. Cerca SVG download
                     html = await btn.inner_html()
                     if 'M228,144v64a12,12,0,0,1-12,12H40' in html or 'download' in html.lower():
                         download_buttons.append((btn, box['x'], box['y']))
                 except:
                     continue
             
-            # Ordina per Y poi X
+            # Ordina: dal più in alto e a sinistra
             download_buttons.sort(key=lambda b: (b[2], b[1]))
             
             return download_buttons
@@ -820,7 +789,7 @@ async def automate_digen_grok_batch():
 
                 print(f"\n📥 Scarico {len(to_generate)} video...\n")
 
-                # 🎯 SCARICA gli ULTIMI N video generati (dalla fine)
+                # 🎯 I NUOVI VIDEO SONO IN ALTO! Scarica posizioni 0, 1, 2...
                 successful_downloads = 0
                 for download_idx in range(len(to_generate)):
                     idx, row = to_generate[download_idx]
@@ -832,7 +801,7 @@ async def automate_digen_grok_batch():
                         failed_prompts[file_name] = failed_prompts.get(file_name, 0) + 1
                         continue
 
-                    # 🎯 NUOVA FORMULA: I nuovi sono SEMPRE in alto (posizioni 0, 1, 2...)
+                    # 🎯 I NUOVI SONO SEMPRE IN ALTO (posizioni 0, 1, 2...)
                     absolute_position = download_idx
 
                     print(f"   {download_idx + 1}/{len(to_generate)}: {file_name} [pos {absolute_position}/{final_count}]")
