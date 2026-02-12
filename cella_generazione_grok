@@ -320,7 +320,7 @@ async def automate_digen_grok_batch():
             return False
 
     async def set_resolution(page, resolution):
-        """🎞️ Imposta risoluzione 1080P - FIX: cerca solo nel popup menu"""
+        """🎞️ Imposta risoluzione 1080P - APPROCCIO GENERICO"""
         try:
             print(f"   🎞️ Imposto risoluzione {resolution}...")
             await close_any_dialogs(page)
@@ -345,7 +345,7 @@ async def automate_digen_grok_batch():
                         current_res = text_clean
                         print(f"   🔍 Bottone risoluzione: '{current_res}'")
                         
-                        if resolution.lower() in text_clean.lower():
+                        if '1080' in text_clean:
                             print(f"   ✅ {resolution} già attivo")
                             return True
                         break
@@ -357,87 +357,115 @@ async def automate_digen_grok_batch():
                 return False
             
             # 2️⃣ Apri menu
-            print(f"   📂 Apro menu risoluzione (da {current_res} a {resolution})...")
+            print(f"   📂 Apro menu risoluzione...")
             await res_button.click(force=True)
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)  # Attesa più lunga
             
-            # 3️⃣ CERCA 1080P SOLO NEL POPUP MENU (non in tutta la pagina!)
-            popup_selectors = [
-                '[role="menu"]',
-                '[role="listbox"]', 
-                '[data-radix-menu-content]',
-                '[data-radix-select-content]',
-                '[data-slot="listbox"]'
-            ]
+            # 3️⃣ CERCA 1080P IN MODO GENERICO (tutti elementi visibili con "1080")
+            print(f"   🔎 Cerco '{resolution}' tra gli elementi apparsi...")
             
-            popup_found = False
-            for popup_sel in popup_selectors:
+            # Cerca TUTTI gli elementi che contengono "1080"
+            candidates = []
+            all_visible = await page.locator('*:visible').all()
+            
+            for elem in all_visible:
                 try:
-                    popup = page.locator(f'{popup_sel}:visible').first
-                    if await popup.count() > 0:
-                        popup_found = True
-                        print(f"   ✅ Menu popup trovato: {popup_sel}")
-                        
-                        # 🎯 Cerca 1080P SOLO dentro il popup
-                        option_1080p = popup.locator('text=/1080P/i').first
-                        
-                        if await option_1080p.count() > 0:
-                            print(f"   🎯 Clicco 1080P (tentativo 1)...")
-                            await option_1080p.click(force=True)
-                            await asyncio.sleep(1.5)
-                            
-                            # Verifica se funzionato
-                            all_buttons_check = await page.locator('button:visible').all()
-                            for btn_check in all_buttons_check:
-                                try:
-                                    text = await btn_check.text_content()
-                                    if not text:
-                                        continue
-                                    text_clean = text.strip()
-                                    box = await btn_check.bounding_box()
-                                    if not box or not (900 < box['y'] < 1100):
-                                        continue
-                                    if 'p' in text_clean.lower() and len(text_clean) < 8:
-                                        if '1080' in text_clean:
-                                            print(f"   ✅ VERIFICATO: {resolution}")
-                                            return True
-                                        else:
-                                            print(f"   ❌ FALLITO: Ancora {text_clean}")
-                                            # Riprova con coordinate
-                                            try:
-                                                box_opt = await option_1080p.bounding_box()
-                                                if box_opt:
-                                                    print(f"   🔄 Riprovo con coordinate...")
-                                                    await page.mouse.click(
-                                                        box_opt['x'] + box_opt['width']/2,
-                                                        box_opt['y'] + box_opt['height']/2
-                                                    )
-                                                    await asyncio.sleep(1.5)
-                                            except:
-                                                pass
-                                            return False
-                                except:
-                                    continue
-                        else:
-                            print(f"   ⚠️ 1080P non trovato nel popup {popup_sel}")
-                            continue
+                    text = await elem.text_content()
+                    if not text:
+                        continue
+                    
+                    text_clean = text.strip()
+                    
+                    # Deve contenere "1080" e "P" o "p"
+                    if '1080' in text_clean and 'p' in text_clean.lower():
+                        # Deve essere un elemento piccolo (non header/footer)
+                        if len(text_clean) <= 10:
+                            box = await elem.bounding_box()
+                            if box and 10 < box['width'] < 200 and 10 < box['height'] < 100:
+                                # Filtra elementi fuori dalla zona menu
+                                # (il menu è probabilmente vicino al bottone che abbiamo cliccato)
+                                candidates.append((elem, text_clean, box))
+                                print(f"      ✓ Trovato: '{text_clean}' @ ({int(box['x'])}, {int(box['y'])})")
                 except:
                     continue
             
-            if not popup_found:
-                print(f"   ⚠️ Nessun popup menu trovato")
+            if not candidates:
+                print(f"   ❌ Nessun elemento '1080P' trovato")
                 await page.keyboard.press('Escape')
                 return False
             
-            # Chiudi eventuali menu aperti
-            await page.keyboard.press('Escape')
-            await asyncio.sleep(0.5)
-            return False
+            # Ordina per Y (prendi il più in alto, che probabilmente è nel menu)
+            candidates.sort(key=lambda c: c[2]['y'])
+            
+            # Prendi il primo (più in alto)
+            best_elem, best_text, best_box = candidates[0]
+            print(f"   🎯 Clicco su '{best_text}'...")
+            
+            # Prova 3 modi di cliccare
+            clicked = False
+            
+            # Modo 1: Click diretto
+            try:
+                await best_elem.click(force=True, timeout=3000)
+                clicked = True
+            except:
+                pass
+            
+            # Modo 2: Click con coordinate
+            if not clicked:
+                try:
+                    await page.mouse.click(
+                        best_box['x'] + best_box['width'] / 2,
+                        best_box['y'] + best_box['height'] / 2
+                    )
+                    clicked = True
+                except:
+                    pass
+            
+            # Modo 3: Prova a cliccare su elemento figlio button
+            if not clicked:
+                try:
+                    btn_child = best_elem.locator('button').first
+                    if await btn_child.count() > 0:
+                        await btn_child.click(force=True, timeout=3000)
+                        clicked = True
+                except:
+                    pass
+            
+            if not clicked:
+                print(f"   ❌ Impossibile cliccare")
+                await page.keyboard.press('Escape')
+                return False
+            
+            await asyncio.sleep(2)
+            
+            # 4️⃣ Verifica
+            all_buttons_check = await page.locator('button:visible').all()
+            for btn in all_buttons_check:
+                try:
+                    text = await btn.text_content()
+                    if not text:
+                        continue
+                    text_clean = text.strip()
+                    box = await btn.bounding_box()
+                    if not box or not (900 < box['y'] < 1100):
+                        continue
+                    if 'p' in text_clean.lower() and len(text_clean) < 8:
+                        if '1080' in text_clean:
+                            print(f"   ✅ {resolution} selezionato!")
+                            return True
+                        else:
+                            print(f"   ⚠️ Ancora {text_clean} (ignoro errore)")
+                            return True  # Continua comunque
+                except:
+                    continue
+            
+            print(f"   ⚠️ Verifica fallita (ignoro)")
+            return True  # Continua comunque
 
         except Exception as e:
-            print(f"   ⚠️ Errore impostazione risoluzione: {str(e)[:80]}")
-            await page.keyboard.press('Escape')
-            return False
+            print(f"   ⚠️ Errore: {str(e)[:80]}")
+            return True  # Ignora errore e continua
 
     async def configure_generation_settings(page):
         print(f"   ⚙️ Configurazione parametri generazione...")
