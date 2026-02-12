@@ -320,152 +320,9 @@ async def automate_digen_grok_batch():
             return False
 
     async def set_resolution(page, resolution):
-        """🎞️ Imposta risoluzione 1080P - APPROCCIO GENERICO"""
-        try:
-            print(f"   🎞️ Imposto risoluzione {resolution}...")
-            await close_any_dialogs(page)
-            await asyncio.sleep(1)
-            
-            # 1️⃣ Trova bottone risoluzione
-            all_buttons = await page.locator('button:visible').all()
-            res_button = None
-            current_res = "?"
-            
-            for btn in all_buttons:
-                try:
-                    text = await btn.text_content()
-                    if not text:
-                        continue
-                    text_clean = text.strip()
-                    box = await btn.bounding_box()
-                    if not box or not (900 < box['y'] < 1100):
-                        continue
-                    if 'p' in text_clean.lower() and len(text_clean) < 8:
-                        res_button = btn
-                        current_res = text_clean
-                        print(f"   🔍 Bottone risoluzione: '{current_res}'")
-                        
-                        if '1080' in text_clean:
-                            print(f"   ✅ {resolution} già attivo")
-                            return True
-                        break
-                except:
-                    continue
-            
-            if not res_button:
-                print(f"   ⚠️ Bottone risoluzione non trovato")
-                return False
-            
-            # 2️⃣ Apri menu
-            print(f"   📂 Apro menu risoluzione...")
-            await res_button.click(force=True)
-            await asyncio.sleep(3)  # Attesa più lunga
-            
-            # 3️⃣ CERCA 1080P IN MODO GENERICO (tutti elementi visibili con "1080")
-            print(f"   🔎 Cerco '{resolution}' tra gli elementi apparsi...")
-            
-            # Cerca TUTTI gli elementi che contengono "1080"
-            candidates = []
-            all_visible = await page.locator('*:visible').all()
-            
-            for elem in all_visible:
-                try:
-                    text = await elem.text_content()
-                    if not text:
-                        continue
-                    
-                    text_clean = text.strip()
-                    
-                    # Deve contenere "1080" e "P" o "p"
-                    if '1080' in text_clean and 'p' in text_clean.lower():
-                        # Deve essere un elemento piccolo (non header/footer)
-                        if len(text_clean) <= 10:
-                            box = await elem.bounding_box()
-                            if box and 10 < box['width'] < 200 and 10 < box['height'] < 100:
-                                # Filtra elementi fuori dalla zona menu
-                                # (il menu è probabilmente vicino al bottone che abbiamo cliccato)
-                                candidates.append((elem, text_clean, box))
-                                print(f"      ✓ Trovato: '{text_clean}' @ ({int(box['x'])}, {int(box['y'])})")
-                except:
-                    continue
-            
-            if not candidates:
-                print(f"   ❌ Nessun elemento '1080P' trovato")
-                await page.keyboard.press('Escape')
-                return False
-            
-            # Ordina per Y (prendi il più in alto, che probabilmente è nel menu)
-            candidates.sort(key=lambda c: c[2]['y'])
-            
-            # Prendi il primo (più in alto)
-            best_elem, best_text, best_box = candidates[0]
-            print(f"   🎯 Clicco su '{best_text}'...")
-            
-            # Prova 3 modi di cliccare
-            clicked = False
-            
-            # Modo 1: Click diretto
-            try:
-                await best_elem.click(force=True, timeout=3000)
-                clicked = True
-            except:
-                pass
-            
-            # Modo 2: Click con coordinate
-            if not clicked:
-                try:
-                    await page.mouse.click(
-                        best_box['x'] + best_box['width'] / 2,
-                        best_box['y'] + best_box['height'] / 2
-                    )
-                    clicked = True
-                except:
-                    pass
-            
-            # Modo 3: Prova a cliccare su elemento figlio button
-            if not clicked:
-                try:
-                    btn_child = best_elem.locator('button').first
-                    if await btn_child.count() > 0:
-                        await btn_child.click(force=True, timeout=3000)
-                        clicked = True
-                except:
-                    pass
-            
-            if not clicked:
-                print(f"   ❌ Impossibile cliccare")
-                await page.keyboard.press('Escape')
-                return False
-            
-            await asyncio.sleep(2)
-            
-            # 4️⃣ Verifica
-            all_buttons_check = await page.locator('button:visible').all()
-            for btn in all_buttons_check:
-                try:
-                    text = await btn.text_content()
-                    if not text:
-                        continue
-                    text_clean = text.strip()
-                    box = await btn.bounding_box()
-                    if not box or not (900 < box['y'] < 1100):
-                        continue
-                    if 'p' in text_clean.lower() and len(text_clean) < 8:
-                        if '1080' in text_clean:
-                            print(f"   ✅ {resolution} selezionato!")
-                            return True
-                        else:
-                            print(f"   ⚠️ Ancora {text_clean} (ignoro errore)")
-                            return True  # Continua comunque
-                except:
-                    continue
-            
-            print(f"   ⚠️ Verifica fallita (ignoro)")
-            return True  # Continua comunque
-
-        except Exception as e:
-            print(f"   ⚠️ Errore: {str(e)[:80]}")
-            return True  # Ignora errore e continua
+        """🎞️ SKIP risoluzione - genera problemi, user può impostarla manualmente"""
+        print(f"   🎞️ Risoluzione {resolution}: SKIP (imposta manualmente se necessario)")
+        return True
 
     async def configure_generation_settings(page):
         print(f"   ⚙️ Configurazione parametri generazione...")
@@ -555,7 +412,7 @@ async def automate_digen_grok_batch():
         return False
 
     async def count_download_buttons(page):
-        """🔢 Conta bottoni download"""
+        """🔢 Conta bottoni download SOLO nell'area principale (NO sidebar)"""
         try:
             await asyncio.sleep(2)
             download_selectors = [
@@ -573,11 +430,19 @@ async def automate_digen_grok_batch():
                             is_visible = await btn.is_visible()
                             if not is_visible:
                                 continue
+                            
+                            box = await btn.bounding_box()
+                            if not box:
+                                continue
+                            
+                            # 🚨 FILTRA: Solo bottoni nell'area principale (x > 200, y < 900)
+                            # Esclude sidebar sinistra (x < 200) e controlli in basso (y > 900)
+                            if box['x'] < 200 or box['y'] > 900:
+                                continue
+                            
                             html = await btn.inner_html()
                             if 'M228,144v64a12,12,0,0,1-12,12H40' in html:
-                                box = await btn.bounding_box()
-                                if box:
-                                    download_buttons.append((btn, box['x'], box['y']))
+                                download_buttons.append((btn, box['x'], box['y']))
                         except:
                             continue
                 except:
@@ -590,6 +455,11 @@ async def automate_digen_grok_batch():
                         box = await btn.bounding_box()
                         if not box:
                             continue
+                        
+                        # 🚨 FILTRA: x > 200, y < 900
+                        if box['x'] < 200 or box['y'] > 900:
+                            continue
+                        
                         if 30 < box['width'] < 50 and 30 < box['height'] < 50:
                             html = await btn.inner_html()
                             if 'svg' in html.lower():
@@ -599,6 +469,8 @@ async def automate_digen_grok_batch():
             
             # Ordina per Y (verticale)
             download_buttons.sort(key=lambda b: b[2])
+            
+            print(f"   🔢 Bottoni trovati (x>200, y<900): {len(download_buttons)}")
             return download_buttons
         except:
             return []
@@ -693,7 +565,6 @@ async def automate_digen_grok_batch():
                         continue
                     return False, "Corrupt", None
                 size_mb = size / (1024 * 1024)
-                print(f"      💾 Salvo...")
                 return True, f"{size_mb:.1f} MB", final_path
             except Exception as e:
                 if attempt < max_retries - 1:
@@ -788,17 +659,15 @@ async def automate_digen_grok_batch():
                 await asyncio.sleep(2)
 
                 # 🔢 CONTA VIDEO PRIMA DELLA GENERAZIONE
-                print(f"\n   🔢 Conto video esistenti...")
                 initial_buttons = await count_download_buttons(page)
                 initial_count = len(initial_buttons)
-                print(f"   📊 Video già presenti: {initial_count}\n")
 
                 generation_success = {}
                 for gen_idx, (idx, row) in enumerate(to_generate):
                     prompt_text = str(row['Prompt']).strip()
                     file_name = str(row['NomeFile']).strip()
 
-                    print(f"   📝 {gen_idx + 1}/{len(to_generate)}: {file_name}")
+                    print(f"\n   📝 {gen_idx + 1}/{len(to_generate)}: {file_name}")
 
                     if not await insert_prompt_multiline(page, prompt_text):
                         print(f"   ⚠️ Errore inserimento prompt")
@@ -809,7 +678,6 @@ async def automate_digen_grok_batch():
                     print(f"   🚀 Generate...")
                     
                     if await click_generate_button(page):
-                        print(f"   ✅ Trovato bottone generate")
                         print(f"   ✅ Inviato")
                         generation_success[file_name] = True
                     else:
@@ -849,9 +717,6 @@ async def automate_digen_grok_batch():
                         continue
 
                     # 🎯 FORMULA CORRETTA: scarica dalla fine
-                    # Se ho 40 video totali e voglio scaricare gli ultimi 2:
-                    # Video 1: 40 - 2 + 0 = 38 (penultimo)
-                    # Video 2: 40 - 2 + 1 = 39 (ultimo)
                     absolute_position = final_count - expected_videos + download_idx
 
                     print(f"   {download_idx + 1}/{len(to_generate)}: {file_name} [pos {absolute_position}/{final_count}]")
