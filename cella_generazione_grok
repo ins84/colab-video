@@ -26,6 +26,8 @@ DURATION = "6s"
 ASPECT_RATIO = "3:2"
 RESOLUTION = "1080P"
 
+DEBUG_MENU = True  # Debug per vedere cosa c'è nel menu
+
 async def automate_digen_grok_batch():
     BASE_URL = "https://digen.ai/en/space/44998"
     print(f"🎬 Modalità: {MODEL.upper()} - Space 44998")
@@ -69,13 +71,13 @@ async def automate_digen_grok_batch():
             pass
 
     async def select_grok_model(page):
-        """🎯 Clicca su bottone modello (RM2.6) e seleziona Grok dal menu"""
+        """🎯 Clicca su bottone modello e seleziona Grok dal menu"""
         try:
             print(f"   🎯 Seleziono modello Grok...")
             await close_any_dialogs(page)
             await asyncio.sleep(2)
             
-            # 🔍 Cerca il bottone del modello attuale (es. "RM2.6" @ y~1013)
+            # 🔍 Cerca il bottone del modello attuale
             all_buttons = await page.locator('button:visible').all()
             
             model_button = None
@@ -91,14 +93,10 @@ async def automate_digen_grok_batch():
                     if not box:
                         continue
                     
-                    # Cerca bottoni nella zona dei controlli (y > 900, y < 1100)
-                    # Con testo tipo "RM2.6", "Grok", ecc. (contiene numeri/lettere, 3-10 caratteri)
+                    # Zona controlli: y > 900, y < 1100
                     if 900 < box['y'] < 1100:
-                        # Potenziali modelli: "RM2.6", "Grok", "Flux", ecc.
                         if 3 <= len(text_clean) <= 10 and any(c.isalpha() for c in text_clean):
-                            # Escludi bottoni comuni che non sono modelli
                             if text_clean.lower() not in ['auto', 'create']:
-                                # Controlla se contiene pattern modello (lettere+numeri o solo lettere)
                                 if any(c.isdigit() for c in text_clean) or text_clean.isalpha():
                                     model_button = btn
                                     print(f"   ✅ Trovato bottone modello: '{text_clean}' @ pos:({int(box['x'])},{int(box['y'])})")
@@ -113,63 +111,95 @@ async def automate_digen_grok_batch():
             # Clicca per aprire il menu
             print(f"   📂 Apro menu modelli...")
             await model_button.click()
-            await asyncio.sleep(2)
             
-            # Cerca "Grok" nel menu aperto
-            # Il menu potrebbe usare diversi selettori
-            grok_selectors = [
-                '[role="menuitem"]:has-text("Grok")',
-                'button:has-text("Grok")',
-                '[role="option"]:has-text("Grok")',
-                'div[role="menuitem"]:has-text("Grok")'
-            ]
+            # ⏳ ATTESA PIU' LUNGA per far apparire il menu
+            await asyncio.sleep(3)
             
-            grok_option = None
-            for selector in grok_selectors:
+            # 📸 DEBUG: Screenshot e lista di TUTTI gli elementi con "grok"
+            if DEBUG_MENU:
                 try:
-                    option = page.locator(selector).first
-                    if await option.count() > 0:
-                        await option.wait_for(state='visible', timeout=3000)
-                        if await option.is_visible():
-                            grok_option = option
-                            print(f"   ✅ Trovato Grok nel menu (selector: {selector[:30]}...)")
-                            break
-                except:
-                    continue
-            
-            if not grok_option:
-                # Fallback: cerca in tutti gli elementi visibili
-                print(f"   🔄 Fallback: cerco Grok in tutti gli elementi visibili...")
-                try:
-                    await asyncio.sleep(1)
-                    # Cerca qualsiasi elemento cliccabile con testo "Grok"
-                    all_clickable = await page.locator('button:visible, [role="menuitem"]:visible, [role="option"]:visible').all()
+                    # Screenshot
+                    await page.screenshot(path="menu_debug.png")
+                    print(f"   📸 Screenshot salvato: menu_debug.png")
                     
-                    for elem in all_clickable:
+                    # Cerca TUTTI gli elementi visibili con testo
+                    all_elements = await page.locator('*:visible').all()
+                    grok_elements = []
+                    
+                    for elem in all_elements[:200]:  # Primi 200 per non sovraccaricare
                         try:
                             text = await elem.text_content()
                             if text and 'grok' in text.lower():
-                                print(f"   ✅ Trovato Grok: '{text.strip()}'")
-                                await elem.click()
-                                await asyncio.sleep(2)
-                                print(f"   ✅ Modello Grok selezionato")
-                                return True
+                                tag = await elem.evaluate('el => el.tagName')
+                                grok_elements.append((tag, text.strip()[:50]))
                         except:
                             continue
+                    
+                    if grok_elements:
+                        print(f"   🔍 DEBUG: Trovati {len(grok_elements)} elementi con 'grok':")
+                        for idx, (tag, text) in enumerate(grok_elements[:10]):
+                            print(f"      [{idx}] <{tag}> '{text}'")
+                    else:
+                        print(f"   ⚠️ DEBUG: Nessun elemento con 'grok' trovato")
                 except Exception as e:
-                    print(f"   ⚠️ Errore fallback: {str(e)[:50]}")
-                
-                print(f"   ⚠️ Grok non trovato nel menu")
-                # Chiudi menu
-                await page.keyboard.press('Escape')
-                await asyncio.sleep(0.5)
-                return False
+                    print(f"   ⚠️ Debug error: {str(e)[:50]}")
             
-            # Clicca su Grok
-            await grok_option.click()
-            await asyncio.sleep(2)
-            print(f"   ✅ Modello Grok selezionato")
-            return True
+            # 🔍 Strategia 1: Cerca in TUTTI gli elementi cliccabili/visibili
+            print(f"   🔎 Cerco 'Grok' in tutti gli elementi...")
+            
+            # Lista di tutti i possibili selettori
+            all_selectors = [
+                'button:visible',
+                '[role="menuitem"]:visible',
+                '[role="option"]:visible',
+                'div:visible',
+                'span:visible',
+                'li:visible',
+                'a:visible'
+            ]
+            
+            for selector in all_selectors:
+                try:
+                    elements = await page.locator(selector).all()
+                    
+                    for elem in elements:
+                        try:
+                            text = await elem.text_content()
+                            if not text:
+                                continue
+                            
+                            text_lower = text.strip().lower()
+                            
+                            # Cerca "grok" (case-insensitive)
+                            if 'grok' in text_lower:
+                                # Verifica che sia cliccabile
+                                try:
+                                    box = await elem.bounding_box()
+                                    if box:  # Ha dimensioni => visibile
+                                        print(f"   ✅ TROVATO Grok: '{text.strip()[:30]}' (selector: {selector})")
+                                        await elem.click()
+                                        await asyncio.sleep(2)
+                                        print(f"   ✅ Modello Grok selezionato")
+                                        return True
+                                except:
+                                    # Non cliccabile, cerca dentro l'elemento
+                                    # Prova a cliccare su un button/div figlio
+                                    clickable = elem.locator('button, [role="button"]').first
+                                    if await clickable.count() > 0:
+                                        await clickable.click()
+                                        await asyncio.sleep(2)
+                                        print(f"   ✅ Modello Grok selezionato (click su figlio)")
+                                        return True
+                        except:
+                            continue
+                except:
+                    continue
+            
+            print(f"   ⚠️ Grok non trovato nel menu")
+            # Chiudi menu
+            await page.keyboard.press('Escape')
+            await asyncio.sleep(0.5)
+            return False
 
         except Exception as e:
             print(f"   ⚠️ Errore selezione Grok: {e}")
@@ -181,7 +211,6 @@ async def automate_digen_grok_batch():
             await close_any_dialogs(page)
             await asyncio.sleep(1)
             
-            # Cerca bottone durata nella zona y~1013
             all_buttons = await page.locator('button:visible').all()
             
             for btn in all_buttons:
@@ -196,7 +225,6 @@ async def automate_digen_grok_batch():
                     if not box or not (900 < box['y'] < 1100):
                         continue
                     
-                    # Bottone durata: contiene "s" (es. "5s", "6s")
                     if 's' in text_clean.lower() and len(text_clean) < 5:
                         print(f"   🔍 Trovato bottone durata: '{text_clean}'")
                         
@@ -204,32 +232,23 @@ async def automate_digen_grok_batch():
                             print(f"   ✅ Durata {duration} già impostata")
                             return True
                         
-                        # Apri menu durata
                         print(f"   📂 Apro menu durata (attuale: {text_clean})...")
                         await btn.click()
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(3)
                         
-                        # Cerca opzione nel menu
-                        option_selectors = [
-                            f'[role="menuitem"]:has-text("{duration}")',
-                            f'button:has-text("{duration}")',
-                            f'[role="option"]:has-text("{duration}")'
-                        ]
-                        
-                        for selector in option_selectors:
+                        # Cerca in tutti gli elementi visibili
+                        all_visible = await page.locator('*:visible').all()
+                        for elem in all_visible:
                             try:
-                                option = page.locator(selector).first
-                                if await option.count() > 0:
-                                    await option.wait_for(state='visible', timeout=3000)
-                                    if await option.is_visible():
-                                        await option.click()
-                                        await asyncio.sleep(1)
-                                        print(f"   ✅ Durata {duration} selezionata")
-                                        return True
+                                text = await elem.text_content()
+                                if text and duration == text.strip():
+                                    await elem.click()
+                                    await asyncio.sleep(1)
+                                    print(f"   ✅ Durata {duration} selezionata")
+                                    return True
                             except:
                                 continue
                         
-                        # Chiudi menu se non trovato
                         await page.keyboard.press('Escape')
                         await asyncio.sleep(0.5)
                         break
@@ -249,7 +268,6 @@ async def automate_digen_grok_batch():
             await close_any_dialogs(page)
             await asyncio.sleep(1)
             
-            # Cerca bottone aspect ratio nella zona y~1013
             all_buttons = await page.locator('button:visible').all()
             
             for btn in all_buttons:
@@ -264,7 +282,6 @@ async def automate_digen_grok_batch():
                     if not box or not (900 < box['y'] < 1100):
                         continue
                     
-                    # Bottone aspect ratio: contiene ":" o "Auto"
                     if ':' in text_clean or 'auto' in text_clean.lower():
                         print(f"   🔍 Trovato bottone aspect ratio: '{text_clean}'")
                         
@@ -272,28 +289,20 @@ async def automate_digen_grok_batch():
                             print(f"   ✅ Aspect ratio {ratio} già impostato")
                             return True
                         
-                        # Apri menu
                         print(f"   📂 Apro menu aspect ratio (attuale: {text_clean})...")
                         await btn.click()
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(3)
                         
-                        # Cerca opzione nel menu
-                        option_selectors = [
-                            f'[role="menuitem"]:has-text("{ratio}")',
-                            f'button:has-text("{ratio}")',
-                            f'[role="option"]:has-text("{ratio}")'
-                        ]
-                        
-                        for selector in option_selectors:
+                        # Cerca in tutti gli elementi visibili
+                        all_visible = await page.locator('*:visible').all()
+                        for elem in all_visible:
                             try:
-                                option = page.locator(selector).first
-                                if await option.count() > 0:
-                                    await option.wait_for(state='visible', timeout=3000)
-                                    if await option.is_visible():
-                                        await option.click()
-                                        await asyncio.sleep(1)
-                                        print(f"   ✅ Aspect ratio {ratio} selezionato")
-                                        return True
+                                text = await elem.text_content()
+                                if text and ratio == text.strip():
+                                    await elem.click()
+                                    await asyncio.sleep(1)
+                                    print(f"   ✅ Aspect ratio {ratio} selezionato")
+                                    return True
                             except:
                                 continue
                         
@@ -315,7 +324,6 @@ async def automate_digen_grok_batch():
             print(f"   🎞️ Verifico risoluzione {resolution}...")
             await close_any_dialogs(page)
             
-            # Cerca bottone risoluzione nella zona y~1013
             all_buttons = await page.locator('button:visible').all()
             
             for btn in all_buttons:
