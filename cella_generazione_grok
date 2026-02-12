@@ -832,8 +832,8 @@ async def automate_digen_grok_batch():
                         failed_prompts[file_name] = failed_prompts.get(file_name, 0) + 1
                         continue
 
-                    # 🎯 FORMULA CORRETTA: scarica dalla fine
-                    absolute_position = final_count - expected_videos + download_idx
+                    # 🎯 NUOVA FORMULA: I nuovi sono SEMPRE in alto (posizioni 0, 1, 2...)
+                    absolute_position = download_idx
 
                     print(f"   {download_idx + 1}/{len(to_generate)}: {file_name} [pos {absolute_position}/{final_count}]")
                     success_dl, msg, path = await download_from_position(
