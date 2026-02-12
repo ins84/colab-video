@@ -111,12 +111,8 @@ async def automate_digen_grok_batch():
             await model_button.click()
             await asyncio.sleep(3)
             
-            # 🔍 CERCA "Grok Video" o "Grok" nel menu popup (ovunque sullo schermo)
-            # Il menu è centrato, non vicino al bottone
+            # 🎯 STRATEGIA: Cerca PRIMA "Grok Video" esatto, poi fallback su "Grok"
             print(f"   🔎 Cerco 'Grok Video' nel menu popup...")
-            
-            # Strategia: cerca elementi con testo contenente "grok" (case-insensitive)
-            # Ordina per lunghezza testo (più corto = più preciso)
             
             candidates = []
             
@@ -153,11 +149,18 @@ async def automate_digen_grok_batch():
                             if not box:
                                 continue
                             
-                            # Filtra solo elementi con testo corto/medio (non contenitori enormi)
-                            # "Grok Video" ha ~10 caratteri, max 50 per sicurezza
+                            # Filtra solo elementi con testo corto/medio
                             if 3 <= len(text_clean) <= 50:
-                                candidates.append((elem, text_clean, len(text_clean), box['width'] * box['height']))
-                                print(f"   📝 Candidato: '{text_clean}'")
+                                # 🎯 Priorità: "Grok Video" ha priorità massima
+                                priority = 0
+                                if 'grok video' in text_lower:
+                                    priority = 1  # Massima priorità
+                                elif text_lower == 'grok':
+                                    priority = 2  # Bassa priorità (potrebbe essere sidebar)
+                                else:
+                                    priority = 3  # Altri match (es. "Grok VideoAudio")
+                                
+                                candidates.append((elem, text_clean, priority, len(text_clean), box['width'] * box['height']))
                         except:
                             continue
                 except:
@@ -169,11 +172,16 @@ async def automate_digen_grok_batch():
                 await asyncio.sleep(0.5)
                 return False
             
-            # Ordina per: testo più corto (più preciso) e area più piccola
-            candidates.sort(key=lambda c: (c[2], c[3]))  # text_len, area
+            # 🎯 Ordina per: 1) Priorità (Grok Video prima), 2) Testo più corto, 3) Area più piccola
+            candidates.sort(key=lambda c: (c[2], c[3], c[4]))  # priority, text_len, area
+            
+            # Mostra i candidati per debug
+            for elem, text, priority, text_len, area in candidates[:5]:
+                priority_label = "[BEST]" if priority == 1 else "[OK]" if priority == 2 else "[LOW]"
+                print(f"   📝 {priority_label} '{text}'")
             
             # Seleziona il migliore
-            best_elem, best_text, best_len, best_area = candidates[0]
+            best_elem, best_text, best_priority, best_len, best_area = candidates[0]
             print(f"   ✅ Seleziono: '{best_text}'")
             
             # Clicca
