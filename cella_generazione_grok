@@ -26,8 +26,6 @@ DURATION = "6s"
 ASPECT_RATIO = "3:2"
 RESOLUTION = "1080P"
 
-DEBUG_MODE = True
-
 async def automate_digen_grok_batch():
     BASE_URL = "https://digen.ai/en/space/44998"
     print(f"🎬 Modalità: {MODEL.upper()} - Space 44998")
@@ -71,68 +69,178 @@ async def automate_digen_grok_batch():
             pass
 
     async def select_grok_model(page):
+        """🎯 Clicca su bottone modello (RM2.6) e seleziona Grok dal menu"""
         try:
             print(f"   🎯 Seleziono modello Grok...")
             await close_any_dialogs(page)
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             
-            # 🔍 DEBUG COMPLETO: Mostra TUTTI i bottoni con testo per trovare Grok
+            # 🔍 Cerca il bottone del modello attuale (es. "RM2.6" @ y~1013)
             all_buttons = await page.locator('button:visible').all()
-            print(f"   📊 Totale bottoni visibili: {len(all_buttons)}")
             
-            buttons_with_text = []
+            model_button = None
             for btn in all_buttons:
                 try:
                     text = await btn.text_content()
-                    if text and len(text.strip()) > 0:
-                        box = await btn.bounding_box()
-                        if box:
-                            buttons_with_text.append((btn, text.strip(), box['x'], box['y'], box['width'], box['height']))
+                    if not text:
+                        continue
+                    
+                    text_clean = text.strip()
+                    box = await btn.bounding_box()
+                    
+                    if not box:
+                        continue
+                    
+                    # Cerca bottoni nella zona dei controlli (y > 900, y < 1100)
+                    # Con testo tipo "RM2.6", "Grok", ecc. (contiene numeri/lettere, 3-10 caratteri)
+                    if 900 < box['y'] < 1100:
+                        # Potenziali modelli: "RM2.6", "Grok", "Flux", ecc.
+                        if 3 <= len(text_clean) <= 10 and any(c.isalpha() for c in text_clean):
+                            # Escludi bottoni comuni che non sono modelli
+                            if text_clean.lower() not in ['auto', 'create']:
+                                # Controlla se contiene pattern modello (lettere+numeri o solo lettere)
+                                if any(c.isdigit() for c in text_clean) or text_clean.isalpha():
+                                    model_button = btn
+                                    print(f"   ✅ Trovato bottone modello: '{text_clean}' @ pos:({int(box['x'])},{int(box['y'])})")
+                                    break
                 except:
                     continue
             
-            print(f"   🔍 Bottoni con testo: {len(buttons_with_text)}")
-            
-            if DEBUG_MODE:
-                print(f"\n   📝 DEBUG: TUTTI i bottoni con testo (primi 30):")
-                for idx, (btn, text, x, y, w, h) in enumerate(buttons_with_text[:30]):
-                    print(f"      [{idx:2d}] '{text[:30]:30s}' | pos:({int(x):4d},{int(y):4d}) size:{int(w):3d}x{int(h):2d}")
-                print()
-            
-            # STRATEGIA 1: Cerca "Grok" (case-insensitive) in TUTTI i bottoni
-            print(f"   🔎 Strategia 1: Cerca 'Grok' in tutti i bottoni...")
-            for idx, (btn, text, x, y, w, h) in enumerate(buttons_with_text):
-                if 'grok' in text.lower():
-                    print(f"   ✅ TROVATO Grok al bottone {idx}: '{text}' @ pos:({int(x)},{int(y)})")
-                    await btn.click()
-                    await asyncio.sleep(2)
-                    print(f"   ✅ Modello Grok selezionato")
-                    return True
-            
-            # STRATEGIA 2: Cerca bottoni con testo corto (3-10 caratteri) che contengono lettere
-            # Ordina per X (da sinistra a destra) e prendi i primi
-            print(f"   🔎 Strategia 2: Bottoni con testo corto (3-10 caratteri)...")
-            short_text_buttons = [(btn, text, x, y) for btn, text, x, y, w, h in buttons_with_text 
-                                  if 3 <= len(text) <= 10 and any(c.isalpha() for c in text)]
-            short_text_buttons.sort(key=lambda x: x[2])  # Ordina per X
-            
-            print(f"   📋 Trovati {len(short_text_buttons)} bottoni con testo corto:")
-            for i, (btn, text, x, y) in enumerate(short_text_buttons[:10]):
-                print(f"      [{i}] '{text}' @ x={int(x)}")
-            
-            # Se c'è un bottone con testo tipo "RM" o simile, potrebbe essere il modello
-            # Prova i primi 5
-            if short_text_buttons:
-                print(f"   ⚠️ Nessun 'Grok' trovato. Lista bottoni candidati per manuale selection...")
-                print(f"   💡 Cerca nell'output DEBUG quale bottone contiene 'Grok' o un nome modello")
-                # Non clicco niente, lascio il default
+            if not model_button:
+                print(f"   ⚠️ Bottone modello non trovato")
                 return False
             
-            print(f"   ⚠️ Nessun bottone modello trovato")
-            return False
+            # Clicca per aprire il menu
+            print(f"   📂 Apro menu modelli...")
+            await model_button.click()
+            await asyncio.sleep(2)
+            
+            # Cerca "Grok" nel menu aperto
+            # Il menu potrebbe usare diversi selettori
+            grok_selectors = [
+                '[role="menuitem"]:has-text("Grok")',
+                'button:has-text("Grok")',
+                '[role="option"]:has-text("Grok")',
+                'div[role="menuitem"]:has-text("Grok")'
+            ]
+            
+            grok_option = None
+            for selector in grok_selectors:
+                try:
+                    option = page.locator(selector).first
+                    if await option.count() > 0:
+                        await option.wait_for(state='visible', timeout=3000)
+                        if await option.is_visible():
+                            grok_option = option
+                            print(f"   ✅ Trovato Grok nel menu (selector: {selector[:30]}...)")
+                            break
+                except:
+                    continue
+            
+            if not grok_option:
+                # Fallback: cerca in tutti gli elementi visibili
+                print(f"   🔄 Fallback: cerco Grok in tutti gli elementi visibili...")
+                try:
+                    await asyncio.sleep(1)
+                    # Cerca qualsiasi elemento cliccabile con testo "Grok"
+                    all_clickable = await page.locator('button:visible, [role="menuitem"]:visible, [role="option"]:visible').all()
+                    
+                    for elem in all_clickable:
+                        try:
+                            text = await elem.text_content()
+                            if text and 'grok' in text.lower():
+                                print(f"   ✅ Trovato Grok: '{text.strip()}'")
+                                await elem.click()
+                                await asyncio.sleep(2)
+                                print(f"   ✅ Modello Grok selezionato")
+                                return True
+                        except:
+                            continue
+                except Exception as e:
+                    print(f"   ⚠️ Errore fallback: {str(e)[:50]}")
+                
+                print(f"   ⚠️ Grok non trovato nel menu")
+                # Chiudi menu
+                await page.keyboard.press('Escape')
+                await asyncio.sleep(0.5)
+                return False
+            
+            # Clicca su Grok
+            await grok_option.click()
+            await asyncio.sleep(2)
+            print(f"   ✅ Modello Grok selezionato")
+            return True
 
         except Exception as e:
             print(f"   ⚠️ Errore selezione Grok: {e}")
+            return False
+
+    async def set_duration(page, duration):
+        try:
+            print(f"   ⏱️ Imposto durata {duration}...")
+            await close_any_dialogs(page)
+            await asyncio.sleep(1)
+            
+            # Cerca bottone durata nella zona y~1013
+            all_buttons = await page.locator('button:visible').all()
+            
+            for btn in all_buttons:
+                try:
+                    text = await btn.text_content()
+                    if not text:
+                        continue
+                    
+                    text_clean = text.strip()
+                    box = await btn.bounding_box()
+                    
+                    if not box or not (900 < box['y'] < 1100):
+                        continue
+                    
+                    # Bottone durata: contiene "s" (es. "5s", "6s")
+                    if 's' in text_clean.lower() and len(text_clean) < 5:
+                        print(f"   🔍 Trovato bottone durata: '{text_clean}'")
+                        
+                        if duration in text_clean:
+                            print(f"   ✅ Durata {duration} già impostata")
+                            return True
+                        
+                        # Apri menu durata
+                        print(f"   📂 Apro menu durata (attuale: {text_clean})...")
+                        await btn.click()
+                        await asyncio.sleep(2)
+                        
+                        # Cerca opzione nel menu
+                        option_selectors = [
+                            f'[role="menuitem"]:has-text("{duration}")',
+                            f'button:has-text("{duration}")',
+                            f'[role="option"]:has-text("{duration}")'
+                        ]
+                        
+                        for selector in option_selectors:
+                            try:
+                                option = page.locator(selector).first
+                                if await option.count() > 0:
+                                    await option.wait_for(state='visible', timeout=3000)
+                                    if await option.is_visible():
+                                        await option.click()
+                                        await asyncio.sleep(1)
+                                        print(f"   ✅ Durata {duration} selezionata")
+                                        return True
+                            except:
+                                continue
+                        
+                        # Chiudi menu se non trovato
+                        await page.keyboard.press('Escape')
+                        await asyncio.sleep(0.5)
+                        break
+                except:
+                    continue
+            
+            print(f"   ⚠️ Durata non impostata")
+            return False
+
+        except Exception as e:
+            print(f"   ⚠️ Errore durata: {str(e)[:80]}")
             return False
 
     async def set_aspect_ratio(page, ratio):
@@ -141,41 +249,56 @@ async def automate_digen_grok_batch():
             await close_any_dialogs(page)
             await asyncio.sleep(1)
             
-            aspect_buttons = await page.locator('button:has(svg:has(rect))').all()
+            # Cerca bottone aspect ratio nella zona y~1013
+            all_buttons = await page.locator('button:visible').all()
             
-            for btn in aspect_buttons:
+            for btn in all_buttons:
                 try:
-                    if not await btn.is_visible():
-                        continue
-                    
                     text = await btn.text_content()
                     if not text:
                         continue
                     
-                    text = text.strip()
+                    text_clean = text.strip()
+                    box = await btn.bounding_box()
                     
-                    if ratio in text:
-                        print(f"   ✅ Aspect ratio {ratio} già impostato")
-                        return True
+                    if not box or not (900 < box['y'] < 1100):
+                        continue
                     
-                    if ':' in text or 'auto' in text.lower():
-                        print(f"   📂 Apro menu aspect ratio (attuale: {text})...")
+                    # Bottone aspect ratio: contiene ":" o "Auto"
+                    if ':' in text_clean or 'auto' in text_clean.lower():
+                        print(f"   🔍 Trovato bottone aspect ratio: '{text_clean}'")
+                        
+                        if ratio in text_clean:
+                            print(f"   ✅ Aspect ratio {ratio} già impostato")
+                            return True
+                        
+                        # Apri menu
+                        print(f"   📂 Apro menu aspect ratio (attuale: {text_clean})...")
                         await btn.click()
                         await asyncio.sleep(2)
                         
-                        option = page.locator(f'button:has-text("{ratio}"), [role="menuitem"]:has-text("{ratio}")').first
+                        # Cerca opzione nel menu
+                        option_selectors = [
+                            f'[role="menuitem"]:has-text("{ratio}")',
+                            f'button:has-text("{ratio}")',
+                            f'[role="option"]:has-text("{ratio}")'
+                        ]
                         
-                        try:
-                            await option.wait_for(state='visible', timeout=3000)
-                            if await option.is_visible():
-                                await option.click()
-                                await asyncio.sleep(1)
-                                print(f"   ✅ Aspect ratio {ratio} selezionato")
-                                return True
-                        except:
-                            await page.keyboard.press('Escape')
-                            await asyncio.sleep(0.5)
+                        for selector in option_selectors:
+                            try:
+                                option = page.locator(selector).first
+                                if await option.count() > 0:
+                                    await option.wait_for(state='visible', timeout=3000)
+                                    if await option.is_visible():
+                                        await option.click()
+                                        await asyncio.sleep(1)
+                                        print(f"   ✅ Aspect ratio {ratio} selezionato")
+                                        return True
+                            except:
+                                continue
                         
+                        await page.keyboard.press('Escape')
+                        await asyncio.sleep(0.5)
                         break
                 except:
                     continue
@@ -191,53 +314,29 @@ async def automate_digen_grok_batch():
         try:
             print(f"   🎞️ Verifico risoluzione {resolution}...")
             await close_any_dialogs(page)
-            res_btn = page.locator(f'button:has-text("{resolution}")').first
-            if await res_btn.count() > 0 and await res_btn.is_visible():
-                print(f"   ✅ Risoluzione {resolution} già impostata")
-                return True
-            return False
-        except Exception as e:
-            return False
-
-    async def set_duration(page, duration):
-        try:
-            print(f"   ⏱️ Imposto durata {duration}...")
-            await close_any_dialogs(page)
-            await asyncio.sleep(1)
-            duration_buttons = await page.locator('button:has(svg:has(circle))').all()
-            for btn in duration_buttons:
+            
+            # Cerca bottone risoluzione nella zona y~1013
+            all_buttons = await page.locator('button:visible').all()
+            
+            for btn in all_buttons:
                 try:
-                    if not await btn.is_visible():
-                        continue
                     text = await btn.text_content()
                     if not text:
                         continue
-                    text = text.strip()
-                    if duration in text:
-                        print(f"   ✅ Durata {duration} già impostata")
+                    
+                    box = await btn.bounding_box()
+                    if not box or not (900 < box['y'] < 1100):
+                        continue
+                    
+                    if resolution in text.strip():
+                        print(f"   ✅ Risoluzione {resolution} già impostata")
                         return True
-                    if 's' in text.lower() and len(text) < 10:
-                        print(f"   📂 Apro menu durata (attuale: {text})...")
-                        await btn.click()
-                        await asyncio.sleep(2)
-                        option = page.locator(f'button:has-text("{duration}"), [role="menuitem"]:has-text("{duration}")').first
-                        try:
-                            await option.wait_for(state='visible', timeout=3000)
-                            if await option.is_visible():
-                                await option.click()
-                                await asyncio.sleep(1)
-                                print(f"   ✅ Durata {duration} selezionata")
-                                return True
-                        except:
-                            await page.keyboard.press('Escape')
-                            await asyncio.sleep(0.5)
-                        break
                 except:
                     continue
-            print(f"   ⚠️ Durata non impostata")
+            
             return False
+
         except Exception as e:
-            print(f"   ⚠️ Errore durata: {str(e)[:80]}")
             return False
 
     async def configure_generation_settings(page):
