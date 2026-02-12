@@ -69,19 +69,16 @@ async def automate_digen_grok_batch():
             pass
 
     async def select_grok_model(page):
-        """🎯 Clicca su bottone modello e seleziona Grok dal menu dropdown"""
+        """🎯 Clicca su bottone modello e seleziona 'Grok Video' dal menu popup"""
         try:
             print(f"   🎯 Seleziono modello Grok...")
             await close_any_dialogs(page)
             await asyncio.sleep(2)
             
-            # 🔍 Cerca il bottone del modello attuale
+            # 🔍 Cerca il bottone del modello attuale (es. RM2.6)
             all_buttons = await page.locator('button:visible').all()
             
             model_button = None
-            model_button_x = 0
-            model_button_y = 0
-            
             for btn in all_buttons:
                 try:
                     text = await btn.text_content()
@@ -100,8 +97,6 @@ async def automate_digen_grok_batch():
                             if text_clean.lower() not in ['auto', 'create']:
                                 if any(c.isdigit() for c in text_clean) or text_clean.isalpha():
                                     model_button = btn
-                                    model_button_x = box['x']
-                                    model_button_y = box['y']
                                     print(f"   ✅ Trovato bottone modello: '{text_clean}' @ pos:({int(box['x'])},{int(box['y'])})")
                                     break
                 except:
@@ -111,30 +106,32 @@ async def automate_digen_grok_batch():
                 print(f"   ⚠️ Bottone modello non trovato")
                 return False
             
-            # Clicca per aprire il menu
+            # Clicca per aprire il menu popup
             print(f"   📂 Apro menu modelli...")
             await model_button.click()
             await asyncio.sleep(3)
             
-            # 🎯 CERCA GROK SOLO NELLA ZONA DEL MENU (vicino al bottone)
-            # Il menu dropdown appare sotto il bottone, quindi:
-            # - x tra (button_x - 200) e (button_x + 400)  [menu può essere largo]
-            # - y tra (button_y - 100) e (button_y + 500)  [menu appare sotto]
+            # 🔍 CERCA "Grok Video" o "Grok" nel menu popup (ovunque sullo schermo)
+            # Il menu è centrato, non vicino al bottone
+            print(f"   🔎 Cerco 'Grok Video' nel menu popup...")
             
-            min_x = model_button_x - 200
-            max_x = model_button_x + 400
-            min_y = model_button_y - 100
-            max_y = model_button_y + 500
-            
-            print(f"   🔍 Cerco Grok nella zona menu: x({int(min_x)}-{int(max_x)}), y({int(min_y)}-{int(max_y)})")
-            
-            # Cerca in TUTTI gli elementi visibili
-            all_selectors = ['button:visible', '[role="menuitem"]:visible', '[role="option"]:visible', 
-                            'div:visible', 'span:visible', 'li:visible']
+            # Strategia: cerca elementi con testo contenente "grok" (case-insensitive)
+            # Ordina per lunghezza testo (più corto = più preciso)
             
             candidates = []
             
-            for selector in all_selectors:
+            # Cerca in vari tipi di elementi
+            selectors = [
+                'button:visible',
+                '[role="menuitem"]:visible', 
+                '[role="option"]:visible',
+                'div:visible',
+                'span:visible',
+                'li:visible',
+                'a:visible'
+            ]
+            
+            for selector in selectors:
                 try:
                     elements = await page.locator(selector).all()
                     
@@ -147,62 +144,61 @@ async def automate_digen_grok_batch():
                             text_clean = text.strip()
                             text_lower = text_clean.lower()
                             
-                            # Deve contenere esattamente "grok" (non parte di altre parole)
+                            # Cerca "grok" nel testo
                             if 'grok' not in text_lower:
                                 continue
                             
-                            # Verifica posizione
+                            # Verifica che sia visibile
                             box = await elem.bounding_box()
                             if not box:
                                 continue
                             
-                            elem_x = box['x']
-                            elem_y = box['y']
-                            
-                            # 🎯 FILTRO CRITICO: Solo elementi nella zona del menu
-                            if min_x <= elem_x <= max_x and min_y <= elem_y <= max_y:
-                                # Verifica che il testo sia corto (non un div contenitore enorme)
-                                if len(text_clean) < 100:  # Max 100 caratteri
-                                    candidates.append((elem, text_clean, elem_x, elem_y, box['width'], box['height']))
-                                    print(f"   📝 Candidato: '{text_clean[:30]}' @ ({int(elem_x)},{int(elem_y)}) size:{int(box['width'])}x{int(box['height'])}")
+                            # Filtra solo elementi con testo corto/medio (non contenitori enormi)
+                            # "Grok Video" ha ~10 caratteri, max 50 per sicurezza
+                            if 3 <= len(text_clean) <= 50:
+                                candidates.append((elem, text_clean, len(text_clean), box['width'] * box['height']))
+                                print(f"   📝 Candidato: '{text_clean}'")
                         except:
                             continue
                 except:
                     continue
             
             if not candidates:
-                print(f"   ⚠️ Nessun elemento 'Grok' trovato nella zona menu")
+                print(f"   ⚠️ Nessun elemento con 'Grok' trovato nel menu")
                 await page.keyboard.press('Escape')
                 await asyncio.sleep(0.5)
                 return False
             
-            # Ordina per: testo più corto (più preciso) e più piccolo (non contenitori)
-            candidates.sort(key=lambda c: (len(c[1]), c[4] * c[5]))  # text length, area
+            # Ordina per: testo più corto (più preciso) e area più piccola
+            candidates.sort(key=lambda c: (c[2], c[3]))  # text_len, area
             
-            # Prende il candidato migliore
-            best_elem, best_text, best_x, best_y, best_w, best_h = candidates[0]
-            print(f"   ✅ SELEZIONO: '{best_text}' @ ({int(best_x)},{int(best_y)}) size:{int(best_w)}x{int(best_h)}")
+            # Seleziona il migliore
+            best_elem, best_text, best_len, best_area = candidates[0]
+            print(f"   ✅ Seleziono: '{best_text}'")
             
             # Clicca
             try:
-                await best_elem.click()
+                await best_elem.click(timeout=5000)
                 await asyncio.sleep(2)
                 print(f"   ✅ Modello Grok selezionato")
                 return True
-            except:
-                # Prova a cliccare su un button figlio
+            except Exception as click_err:
+                # Prova a cliccare su un elemento figlio cliccabile
                 try:
-                    clickable = best_elem.locator('button').first
-                    if await clickable.count() > 0:
-                        await clickable.click()
+                    print(f"   🔄 Click diretto fallito, provo elemento figlio...")
+                    clickable_child = best_elem.locator('button, [role="button"], a').first
+                    if await clickable_child.count() > 0:
+                        await clickable_child.click(timeout=5000)
                         await asyncio.sleep(2)
-                        print(f"   ✅ Modello Grok selezionato (click su button figlio)")
+                        print(f"   ✅ Modello Grok selezionato (via figlio)")
                         return True
                 except:
                     pass
-            
-            print(f"   ⚠️ Impossibile cliccare su Grok")
-            return False
+                
+                print(f"   ⚠️ Impossibile cliccare: {str(click_err)[:50]}")
+                await page.keyboard.press('Escape')
+                await asyncio.sleep(0.5)
+                return False
 
         except Exception as e:
             print(f"   ⚠️ Errore selezione Grok: {e}")
