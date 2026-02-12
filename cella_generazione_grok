@@ -76,98 +76,59 @@ async def automate_digen_grok_batch():
             await close_any_dialogs(page)
             await asyncio.sleep(3)
             
-            # Cerca TUTTI i bottoni visibili
+            # 🔍 DEBUG COMPLETO: Mostra TUTTI i bottoni con testo per trovare Grok
             all_buttons = await page.locator('button:visible').all()
             print(f"   📊 Totale bottoni visibili: {len(all_buttons)}")
             
-            # 🎯 Filtra bottoni nella BARRA CONTROLLI VIDEO (non sidebar)
-            # I controlli video sono: x > 300px (dopo la sidebar), y < 150px (in alto)
-            control_buttons = []
+            buttons_with_text = []
             for btn in all_buttons:
                 try:
-                    box = await btn.bounding_box()
-                    # Controlli video: centro/destra della pagina, zona superiore
-                    if box and box['x'] > 300 and box['y'] < 150:
-                        control_buttons.append(btn)
+                    text = await btn.text_content()
+                    if text and len(text.strip()) > 0:
+                        box = await btn.bounding_box()
+                        if box:
+                            buttons_with_text.append((btn, text.strip(), box['x'], box['y'], box['width'], box['height']))
                 except:
                     continue
             
-            print(f"   🔍 Bottoni barra controlli (x>300, y<150): {len(control_buttons)}")
+            print(f"   🔍 Bottoni con testo: {len(buttons_with_text)}")
             
-            if DEBUG_MODE and control_buttons:
-                print(f"\n   📝 DEBUG: Bottoni nella barra controlli video:")
-                for idx, btn in enumerate(control_buttons[:20]):
-                    try:
-                        text = await btn.text_content()
-                        text_clean = text.strip() if text else "[no text]"
-                        box = await btn.bounding_box()
-                        x = int(box['x']) if box else 0
-                        y = int(box['y']) if box else 0
-                        w = int(box['width']) if box else 0
-                        h = int(box['height']) if box else 0
-                        print(f"      [{idx}] '{text_clean[:40]}' | pos:({x},{y}) size:{w}x{h}")
-                    except Exception as e:
-                        print(f"      [{idx}] ERROR: {str(e)[:40]}")
+            if DEBUG_MODE:
+                print(f"\n   📝 DEBUG: TUTTI i bottoni con testo (primi 30):")
+                for idx, (btn, text, x, y, w, h) in enumerate(buttons_with_text[:30]):
+                    print(f"      [{idx:2d}] '{text[:30]:30s}' | pos:({int(x):4d},{int(y):4d}) size:{int(w):3d}x{int(h):2d}")
                 print()
             
-            # STRATEGIA 1: Cerca "Grok" nel testo
-            print(f"   🔎 Strategia 1: Cerca testo 'Grok'...")
-            for idx, btn in enumerate(control_buttons):
-                try:
-                    text = await btn.text_content()
-                    if not text:
-                        continue
-                    
-                    text_lower = text.strip().lower()
-                    
-                    if 'grok' in text_lower:
-                        print(f"   ✅ TROVATO Grok al bottone {idx}: '{text.strip()}'")
-                        await btn.click()
-                        await asyncio.sleep(2)
-                        print(f"   ✅ Modello Grok selezionato")
-                        return True
-                        
-                except Exception as e:
-                    continue
+            # STRATEGIA 1: Cerca "Grok" (case-insensitive) in TUTTI i bottoni
+            print(f"   🔎 Strategia 1: Cerca 'Grok' in tutti i bottoni...")
+            for idx, (btn, text, x, y, w, h) in enumerate(buttons_with_text):
+                if 'grok' in text.lower():
+                    print(f"   ✅ TROVATO Grok al bottone {idx}: '{text}' @ pos:({int(x)},{int(y)})")
+                    await btn.click()
+                    await asyncio.sleep(2)
+                    print(f"   ✅ Modello Grok selezionato")
+                    return True
             
-            # STRATEGIA 2: Cerca il PRIMO bottone con testo breve (non icona)
-            print(f"   🔎 Strategia 2: Primo bottone con testo (probabile modello)...")
-            text_buttons = []
-            for idx, btn in enumerate(control_buttons):
-                try:
-                    text = await btn.text_content()
-                    if text:
-                        text_clean = text.strip()
-                        # Testo breve (3-15 caratteri), non solo emoji/simboli
-                        if 3 <= len(text_clean) <= 15 and any(c.isalpha() for c in text_clean):
-                            box = await btn.bounding_box()
-                            text_buttons.append((idx, btn, text_clean, box['x'] if box else 0))
-                            print(f"      Candidato [{idx}]: '{text_clean}'")
-                except:
-                    continue
+            # STRATEGIA 2: Cerca bottoni con testo corto (3-10 caratteri) che contengono lettere
+            # Ordina per X (da sinistra a destra) e prendi i primi
+            print(f"   🔎 Strategia 2: Bottoni con testo corto (3-10 caratteri)...")
+            short_text_buttons = [(btn, text, x, y) for btn, text, x, y, w, h in buttons_with_text 
+                                  if 3 <= len(text) <= 10 and any(c.isalpha() for c in text)]
+            short_text_buttons.sort(key=lambda x: x[2])  # Ordina per X
             
-            # Ordina per posizione X (da sinistra)
-            text_buttons.sort(key=lambda x: x[3])
+            print(f"   📋 Trovati {len(short_text_buttons)} bottoni con testo corto:")
+            for i, (btn, text, x, y) in enumerate(short_text_buttons[:10]):
+                print(f"      [{i}] '{text}' @ x={int(x)}")
             
-            # Prova il PRIMO bottone con testo (dovrebbe essere il modello)
-            if text_buttons:
-                idx, btn, txt, x = text_buttons[0]
-                print(f"   ✅ Seleziono primo bottone con testo: '{txt}' (indice {idx})")
-                await btn.click()
-                await asyncio.sleep(2)
-                return True
+            # Se c'è un bottone con testo tipo "RM" o simile, potrebbe essere il modello
+            # Prova i primi 5
+            if short_text_buttons:
+                print(f"   ⚠️ Nessun 'Grok' trovato. Lista bottoni candidati per manuale selection...")
+                print(f"   💡 Cerca nell'output DEBUG quale bottone contiene 'Grok' o un nome modello")
+                # Non clicco niente, lascio il default
+                return False
             
-            # STRATEGIA 3: Click sul primo bottone della barra controlli
-            print(f"   🔎 Strategia 3: Primo bottone barra controlli (fallback)...")
-            if control_buttons:
-                first_btn = control_buttons[0]
-                text = await first_btn.text_content()
-                print(f"   ⚠️ Uso primo bottone: '{text.strip() if text else '[no text]'}'")
-                await first_btn.click()
-                await asyncio.sleep(2)
-                return True
-            
-            print(f"   ⚠️ Nessun bottone trovato nella barra controlli")
+            print(f"   ⚠️ Nessun bottone modello trovato")
             return False
 
         except Exception as e:
@@ -230,15 +191,11 @@ async def automate_digen_grok_batch():
         try:
             print(f"   🎞️ Verifico risoluzione {resolution}...")
             await close_any_dialogs(page)
-            
             res_btn = page.locator(f'button:has-text("{resolution}")').first
-            
             if await res_btn.count() > 0 and await res_btn.is_visible():
                 print(f"   ✅ Risoluzione {resolution} già impostata")
                 return True
-            
             return False
-
         except Exception as e:
             return False
 
@@ -247,31 +204,23 @@ async def automate_digen_grok_batch():
             print(f"   ⏱️ Imposto durata {duration}...")
             await close_any_dialogs(page)
             await asyncio.sleep(1)
-            
             duration_buttons = await page.locator('button:has(svg:has(circle))').all()
-            
             for btn in duration_buttons:
                 try:
                     if not await btn.is_visible():
                         continue
-                    
                     text = await btn.text_content()
                     if not text:
                         continue
-                    
                     text = text.strip()
-                    
                     if duration in text:
                         print(f"   ✅ Durata {duration} già impostata")
                         return True
-                    
                     if 's' in text.lower() and len(text) < 10:
                         print(f"   📂 Apro menu durata (attuale: {text})...")
                         await btn.click()
                         await asyncio.sleep(2)
-                        
                         option = page.locator(f'button:has-text("{duration}"), [role="menuitem"]:has-text("{duration}")').first
-                        
                         try:
                             await option.wait_for(state='visible', timeout=3000)
                             if await option.is_visible():
@@ -282,14 +231,11 @@ async def automate_digen_grok_batch():
                         except:
                             await page.keyboard.press('Escape')
                             await asyncio.sleep(0.5)
-                        
                         break
                 except:
                     continue
-            
             print(f"   ⚠️ Durata non impostata")
             return False
-
         except Exception as e:
             print(f"   ⚠️ Errore durata: {str(e)[:80]}")
             return False
