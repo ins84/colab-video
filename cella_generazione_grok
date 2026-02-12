@@ -175,11 +175,6 @@ async def automate_digen_grok_batch():
             # 🎯 Ordina per: 1) Priorità (Grok Video prima), 2) Testo più corto, 3) Area più piccola
             candidates.sort(key=lambda c: (c[2], c[3], c[4]))  # priority, text_len, area
             
-            # Mostra i candidati per debug
-            for elem, text, priority, text_len, area in candidates[:5]:
-                priority_label = "[BEST]" if priority == 1 else "[OK]" if priority == 2 else "[LOW]"
-                print(f"   📝 {priority_label} '{text}'")
-            
             # Seleziona il migliore
             best_elem, best_text, best_priority, best_len, best_area = candidates[0]
             print(f"   ✅ Seleziono: '{best_text}'")
@@ -325,31 +320,68 @@ async def automate_digen_grok_batch():
             return False
 
     async def set_resolution(page, resolution):
+        """🎞️ Imposta risoluzione (es. 1080P)"""
         try:
-            print(f"   🎞️ Verifico risoluzione {resolution}...")
+            print(f"   🎞️ Imposto risoluzione {resolution}...")
             await close_any_dialogs(page)
+            await asyncio.sleep(1)
             
             all_buttons = await page.locator('button:visible').all()
             
+            # Cerca il bottone della risoluzione
             for btn in all_buttons:
                 try:
                     text = await btn.text_content()
                     if not text:
                         continue
                     
+                    text_clean = text.strip()
                     box = await btn.bounding_box()
+                    
                     if not box or not (900 < box['y'] < 1100):
                         continue
                     
-                    if resolution in text.strip():
-                        print(f"   ✅ Risoluzione {resolution} già impostata")
-                        return True
+                    # Bottone risoluzione contiene "P" (es. 480P, 720P, 1080P)
+                    if 'p' in text_clean.lower() and len(text_clean) < 8:
+                        print(f"   🔍 Trovato bottone risoluzione: '{text_clean}'")
+                        
+                        # Verifica se è già la risoluzione desiderata
+                        if resolution.lower() in text_clean.lower():
+                            print(f"   ✅ Risoluzione {resolution} già impostata")
+                            return True
+                        
+                        # Apri menu e seleziona risoluzione
+                        print(f"   📂 Apro menu risoluzione (attuale: {text_clean})...")
+                        await btn.click()
+                        await asyncio.sleep(3)
+                        
+                        # Cerca risoluzione desiderata nel menu
+                        all_visible = await page.locator('*:visible').all()
+                        for elem in all_visible:
+                            try:
+                                text = await elem.text_content()
+                                if text and resolution.lower() in text.strip().lower():
+                                    # Verifica lunghezza testo (es. "1080P" ha 5 char)
+                                    if len(text.strip()) < 10:
+                                        await elem.click()
+                                        await asyncio.sleep(1)
+                                        print(f"   ✅ Risoluzione {resolution} selezionata")
+                                        return True
+                            except:
+                                continue
+                        
+                        print(f"   ⚠️ {resolution} non trovato nel menu")
+                        await page.keyboard.press('Escape')
+                        await asyncio.sleep(0.5)
+                        return False
                 except:
                     continue
             
+            print(f"   ⚠️ Bottone risoluzione non trovato")
             return False
 
         except Exception as e:
+            print(f"   ⚠️ Errore risoluzione: {str(e)[:80]}")
             return False
 
     async def configure_generation_settings(page):
