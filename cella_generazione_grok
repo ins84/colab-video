@@ -286,11 +286,13 @@ async def automate_digen_grok_batch():
             return False
 
     async def set_resolution(page, resolution):
-        """🎞️ Seleziona 1080P dal menu radio button"""
+        """🎞️ MULTI-STRATEGIA per attivare 1080P"""
         try:
+            print(f"   🎞️ Imposto risoluzione {resolution}...")
             await close_any_dialogs(page)
             await asyncio.sleep(1)
             
+            # ➡️ TROVA bottone risoluzione principale
             all_buttons = await page.locator('button:visible').all()
             res_button = None
             current_res = "?"
@@ -307,75 +309,166 @@ async def automate_digen_grok_batch():
                     if 'p' in text_clean.lower() and len(text_clean) < 8:
                         res_button = btn
                         current_res = text_clean
-                        
+                        print(f"   🔍 Bottone: '{current_res}'")
                         if '1080' in text_clean:
+                            print(f"   ✅ {resolution} già attivo")
                             return True
                         break
                 except:
                     continue
             
             if not res_button:
+                print(f"   ⚠️ Bottone non trovato")
                 return True
             
+            # ➡️ APRI menu
+            print(f"   📂 Apro menu...")
             await res_button.click(force=True)
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             
-            candidates = []
-            
-            all_elements = await page.locator('*:visible').all()
-            for elem in all_elements:
+            async def try_click_1080():
+                """🔥 6 STRATEGIE"""
+                
+                # 1️⃣ Radio button
                 try:
-                    text = await elem.text_content()
+                    radio = page.get_by_role("radio", name="1080P").first
+                    if await radio.count() > 0:
+                        await radio.click(timeout=3000)
+                        print(f"   ✅ [1/6] Radio button")
+                        await asyncio.sleep(1)
+                        return True
+                except:
+                    pass
+                
+                # 2️⃣ Button
+                try:
+                    btn = page.get_by_role("button", name="1080P").first
+                    if await btn.count() > 0:
+                        await btn.click(timeout=3000)
+                        print(f"   ✅ [2/6] Button")
+                        await asyncio.sleep(1)
+                        return True
+                except:
+                    pass
+                
+                # 3️⃣ Menuitem
+                try:
+                    item = page.get_by_role("menuitem", name="1080P").first
+                    if await item.count() > 0:
+                        await item.click(timeout=3000)
+                        print(f"   ✅ [3/6] Menuitem")
+                        await asyncio.sleep(1)
+                        return True
+                except:
+                    pass
+                
+                # 4️⃣ Testo esatto
+                try:
+                    text_elem = page.get_by_text("1080P", exact=True).first
+                    if await text_elem.count() > 0:
+                        await text_elem.click(timeout=3000)
+                        print(f"   ✅ [4/6] Testo")
+                        await asyncio.sleep(1)
+                        return True
+                except:
+                    pass
+                
+                # 5️⃣ FORZA BRUTA - Cerca TUTTI
+                try:
+                    all_visible = await page.locator('*:visible').all()
+                    candidates = []
+                    
+                    for elem in all_visible:
+                        try:
+                            text = await elem.text_content()
+                            if not text or text.strip() != "1080P":
+                                continue
+                            
+                            box = await elem.bounding_box()
+                            if not box or box['y'] < 600:
+                                continue
+                            
+                            candidates.append((elem, box))
+                        except:
+                            continue
+                    
+                    if candidates:
+                        candidates.sort(key=lambda c: c[1]['y'])
+                        best_elem, best_box = candidates[0]
+                        
+                        # Prova click
+                        try:
+                            await best_elem.click(force=True, timeout=3000)
+                            print(f"   ✅ [5/6] Forza bruta")
+                            await asyncio.sleep(1)
+                            return True
+                        except:
+                            pass
+                        
+                        # Prova mouse
+                        try:
+                            await page.mouse.click(
+                                best_box['x'] + best_box['width'] / 2,
+                                best_box['y'] + best_box['height'] / 2
+                            )
+                            print(f"   ✅ [5/6] Mouse click")
+                            await asyncio.sleep(1)
+                            return True
+                        except:
+                            pass
+                except:
+                    pass
+                
+                # 6️⃣ TASTIERA (480P → Down → 720P → Down → 1080P)
+                try:
+                    await page.keyboard.press('ArrowDown')
+                    await asyncio.sleep(0.3)
+                    await page.keyboard.press('ArrowDown')
+                    await asyncio.sleep(0.3)
+                    await page.keyboard.press('Enter')
+                    print(f"   ✅ [6/6] Tastiera")
+                    await asyncio.sleep(1)
+                    return True
+                except:
+                    pass
+                
+                return False
+            
+            # ➡️ PROVA TUTTE LE STRATEGIE
+            success = await try_click_1080()
+            
+            if not success:
+                await page.keyboard.press('Escape')
+                print(f"   ❌ Tutte le strategie fallite")
+                return True
+            
+            # ➡️ VERIFICA
+            await asyncio.sleep(2)
+            all_buttons_check = await page.locator('button:visible').all()
+            
+            for btn in all_buttons_check:
+                try:
+                    text = await btn.text_content()
                     if not text:
                         continue
-                    
                     text_clean = text.strip()
-                    
-                    if text_clean.lower() != '1080p':
+                    box = await btn.bounding_box()
+                    if not box or not (900 < box['y'] < 1100):
                         continue
-                    
-                    box = await elem.bounding_box()
-                    if not box:
-                        continue
-                    
-                    if 20 < box['width'] < 150 and 15 < box['height'] < 60:
-                        if 600 < box['y'] < 1000:
-                            candidates.append((elem, text_clean, box))
+                    if 'p' in text_clean.lower() and len(text_clean) < 8:
+                        if '1080' in text_clean:
+                            print(f"   ✅ {resolution} ATTIVATO!")
+                            return True
+                        else:
+                            print(f"   ⚠️ Ancora {text_clean} (continuo)")
+                            return True
                 except:
                     continue
             
-            if not candidates:
-                await page.keyboard.press('Escape')
-                return True
-            
-            best_elem, best_text, best_box = candidates[0]
-            
-            clicked = False
-            
-            try:
-                await page.mouse.click(
-                    best_box['x'] + best_box['width'] / 2,
-                    best_box['y'] + best_box['height'] / 2
-                )
-                clicked = True
-            except:
-                pass
-            
-            if not clicked:
-                try:
-                    await best_elem.click(force=True, timeout=3000)
-                    clicked = True
-                except:
-                    pass
-            
-            if not clicked:
-                await page.keyboard.press('Escape')
-                return True
-            
-            await asyncio.sleep(2)
             return True
 
         except Exception as e:
+            print(f"   ⚠️ Errore: {str(e)[:80]}")
             return True
 
     async def configure_generation_settings(page):
@@ -480,11 +573,9 @@ async def automate_digen_grok_batch():
                     if not box:
                         continue
                     
-                    # Dimensioni ragionevoli per un bottone
                     if not (15 < box['width'] < 100 and 15 < box['height'] < 100):
                         continue
                     
-                    # Cerca SVG download
                     html = await btn.inner_html()
                     if 'M228,144v64a12,12,0,0,1-12,12H40' in html or 'download' in html.lower():
                         download_buttons.append((btn, box['x'], box['y']))
@@ -493,7 +584,6 @@ async def automate_digen_grok_batch():
                 except:
                     continue
             
-            # Ordina: dal più in alto e a sinistra
             download_buttons.sort(key=lambda b: (b[2], b[1]))
             
             return download_buttons
@@ -539,7 +629,6 @@ async def automate_digen_grok_batch():
                 print(f"   ✅ {new_videos} nuovi video pronti!\n")
                 return True, current_buttons
             
-            # Stampa progresso ogni 30s
             if elapsed - last_print_time >= 30:
                 print(f"   ⏳ {elapsed}s... {current_count}/{initial_count + expected_new}")
                 last_print_time = elapsed
