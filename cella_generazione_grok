@@ -815,7 +815,8 @@ async def automate_digen_grok_batch():
                         failed_prompts[file_name] = failed_prompts.get(file_name, 0) + 1
                         continue
 
-                    absolute_position = download_idx
+                    # 🔥 FIX: Inverti l'ordine perché i video nuovi appaiono in alto
+                    absolute_position = len(to_generate) - 1 - download_idx
 
                     print(f"   {download_idx + 1}/{len(to_generate)}: {file_name}...", end=" ")
                     success_dl, msg, path = await download_from_position(
